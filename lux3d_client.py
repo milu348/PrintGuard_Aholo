@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Aholo 开放平台 API 客户端：生成任务/轮询/下载、Asset 上传，
-以及概念图 / 部件拆分 / 材质迁移能力（schema 直译自官方 OpenAPI，已实测）。
-常规一条龙走 pipeline.py；概念图/拆件/材质迁移可独立导入调用（与生成同串行规则）。"""
+以及概念图能力（schema 直译自官方 OpenAPI，已实测）。
+常规一条龙走 pipeline.py；概念图可独立导入调用（与生成同串行规则）。"""
 from __future__ import annotations
 
 import json
@@ -127,7 +127,7 @@ def upload_mesh(path) -> str:
     return res.url
 
 
-# ---------- 群核能力扩展（概念图 / 拆件 / 材质迁移）——官方 OpenAPI schema 直译，已实测（v0.3.1），未接入交付链 ----------
+# ---------- 群核能力扩展（概念图）——官方 OpenAPI schema 直译，已实测（v0.3.1），未接入交付链 ----------
 
 def _wait_and_download(key: str, tid: int, dest_dir, want_ext: set) -> list:
     """Lux3D 任务通用：轮询至终态 + 按扩展名下载。"""
@@ -169,31 +169,3 @@ def concept_image(key: str, prompt: str, image: str | None = None,
     if not paths:
         raise RuntimeError("concept: no image url in outputs")
     return paths[0]
-
-
-def part_split(glb_path: str, dest_dir="output/parts") -> list:
-    """part-split：模型拆件（GLB 输入），返回拆件 GLB 路径列表。"""
-    key = load_key()
-    url = glb_path if str(glb_path).startswith("http") else upload_mesh(glb_path)
-    r = requests.post(f"{BASE}/lux3d/v1/part-split/task/create",
-                      headers={"Authorization": key}, json={"glbUrl": url}, timeout=30)
-    d = r.json()
-    if d.get("c") != "0":
-        raise RuntimeError(f"part-split create failed: {d}")
-    return _wait_and_download(key, int(d["d"]), dest_dir, {"glb"})
-
-
-def material_transfer(glb_path: str, material_image: str,
-                      dest_dir="output/material") -> list:
-    """material-transfer：按材质参考图给模型上材质，返回结果 GLB/ZIP 路径。"""
-    key = load_key()
-    mesh_url = glb_path if str(glb_path).startswith("http") else upload_mesh(glb_path)
-    img_url = material_image if str(material_image).startswith("http") else upload_mesh(material_image)
-    r = requests.post(f"{BASE}/lux3d/v1/generate/material-transfer/task/create",
-                      headers={"Authorization": key},
-                      json={"img": img_url, "meshUrl": mesh_url,
-                            "version": "v3.0-standard"}, timeout=30)
-    d = r.json()
-    if d.get("c") != "0":
-        raise RuntimeError(f"material-transfer create failed: {d}")
-    return _wait_and_download(key, int(d["d"]), dest_dir, {"glb", "zip"})

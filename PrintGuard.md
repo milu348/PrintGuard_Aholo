@@ -78,7 +78,7 @@
 | 8 | 桥接 ≤10mm | 截面分析 | 摆放调整 / 底部填实 | P2 | — |
 | 9 | 无孤岛 | 逐层截面连通性 | 摆放调整 | P2 | — |
 | 10 | 细柱/针尖易断 | 直径<2mm 细长比 | 截断+倒圆角 | P2 | 部分（壁厚检测抓发丝级并如实报） |
-| 11 | 过大/异形件难打印 | 包围盒 vs 打印机行程 | Lux3D part-split 拆件，输出多文件 | P2 | ✅ 客户端就绪（已实测，未接入交付链） |
+| 11 | 过大/异形件难打印 | 包围盒 vs 打印机行程 | Lux3D part-split 拆件，输出多文件 | P2 | ✗ 已移除（v0.5：单连体输入返回原样，对 AI 生成件无效） |
 
 P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P2 = 时间富余再做。
 
@@ -90,7 +90,7 @@ P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P
 |---|---|
 | 交付物 | `printable.3mf` + `diagnostic_sheet.png`（缺陷着色+中文指标）+ `turntable.gif`（+ `sheet_preview.jpg` 内联缩略 / report.json） |
 | 已验证 | 5+ 条端到端真实生成流水线（fast/fine/图文输入，D→S/A 全部水密）、selftest 6/6、MCP stdio 协议回归、uvx 可安装包 |
-| 群核服务 | 文生/图生 3D ✓、Asset 上传 ✓（参考图上传用）；概念图/拆件/材质迁移已实测未接入交付链（`lux3d_client` 备用）；官方多格式导出链已移除（v0.4，尺寸偏差） |
+| 群核服务 | 文生/图生 3D ✓、Asset 上传 ✓（参考图上传用）；概念图已实测未接入（`lux3d_client.concept_image` 可直接调用）；拆件/材质迁移已移除（v0.5 评估）；官方多格式导出链已移除（v0.4，尺寸偏差） |
 | 检测项 | 水密性 / 悬垂 45° / 壁厚 EDT 三档 verdict / 风险评分 S-D ✓；小孔/间隙/内腔 v0.5 评估后暂缓（结论见日志），桥接/孤岛未做 |
 
 以下为按时间的开发日志（决策与踩坑的完整记录，续作时先读这里）：
@@ -125,6 +125,7 @@ P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P
 - **v0.4 开源发布（v0.4.0 → github.com/milu348/PrintGuard_Aholo）**：git init 首推（main + tag v0.4.0），远程原占位 README 经 --force-with-lease 替换；新增 MIT LICENSE（署名 PrintGuard contributors）与 docs/img 示例图（README 交付示例节，九尾狐 fast 档案例）；test_mcp_client ROOT 改 __file__ 相对（clone 即可跑）、PrintGuard.md MCP 配置示例路径通用化；情报汇总与全部运行产物不入库（.gitignore 核查 CLEAN）。打包冒烟：setuptools 由 pyproject 构建 wheel 成功（printguard-0.4.0，24KB，四模块+入口），uvx 安装链路打包层验证通过。沙箱注意：pip 的 build 子进程写临时目录会被沙箱拦（git/pwsh cmdlet 不受影响），构建验证需提权一次；venv 无 pip（--without-pip 遗留）时用全局 python -m pip。
 - **v0.4 Agent 工具样式对齐（无服务器读取方案落地）**：产物改**绝对路径**（uvx 分发时宿主 cwd 不确定的兜底）；任务 done 时 `check_printguard_job` **内联返回诊断缩略图** `sheet_preview.jpg`（PIL 降采样 JPEG，实测 11KB，全尺寸 PNG 67KB 留路径）——agent 在对话内直接"看"诊断图讲解缺陷，零外部服务器（与 playwright 截图同款协议机制）；`quality`/`style` 改 Literal 枚举（JSON Schema 自动带 enum）；`FastMCP(instructions=...)` 随 initialize 下发四条硬规则；错误统一 raise（宿主收 is_error）。**顺手修掉第二个潜伏 bug**：`prompt` 原为 schema 必填 → 不带 prompt 的修复任务从来过不了 pydantic 校验（旧测试未覆盖 repair 路径）；改为可选 + 函数体显式校验，`height_mm` 同理——schema 必填会逼宿主 LLM 编数字，违反"绝不猜尺寸"，显式报错顶回去问用户才是正确契约。真机回归：repair job 全链路 INLINE PASS（done 块=['text','image']，四路径均为绝对值）。
 - **v0.5 P1 检测项评估：实现 → 验证 → 决策暂缓（决策过程完整留档）**：#4 间隙 / #5 小孔 / #6 密闭腔的检测与修复全部实现并跑过 selftest（8/10），收尾前做产品价值复盘，结论是**整体撤回**（printguard.py 回滚至 v0.4.0 基线）。理由：① 对目标场景（AI 生成手办/结构件）三项均非打印失败主因——P0（水密/壁厚/悬垂）才是翻车重灾区；② 小孔缩径的创客常规解法（打印后钻孔）成本低于预防；③ 密闭腔用切片器 100% 填充零成本规避，自动钻排气孔反而明显改几何；④ 间隙检测受体素分辨率硬限制（≈2×pitch，130mm 模型上 ≈0.54mm，**大于 0.4mm 阈值本身**），verdict 天然偏软，混进报告会稀释四个硬指标的公信力；⑤ 自动修复价值/风险比不划算（gap_fuse 焊死窄缝会改设计意图、扩孔 +0.06mm 不如建模端 +5% 精确）。**过程中撞出的已知盲区（留档，暂不修）**：壁厚分析网格经 fill_holes，空心件（省材料打印的常见做法）会被当实心、壁厚虚报为整体尺寸——修复方案已验证可行（分析网格 fill=False，~4 行，含空心盒正确报 5mm 壳厚的 selftest 已跑通），待后续与空心件场景需求一起评估。
+- **v0.5 功能收敛（第二轮删减）**：`material_transfer`/`part_split` 从 lux3d_client 移除（与核心主张无关且拆件对单连体 AI 生成件无效，git 历史可找回）；`concept_image` 保留——它是完整实现且实测通过的独立函数（31s 出图），可直接导入调用，无需额外 API 代码，是否接入交付链留待后续决策。B 类未验证项（uvx 端到端/MCP 生成 job/图文输入/URL 输入分支）本轮决策暂不验证，留档待测。
 
 
 ## MCP 接入（已落地）

@@ -16,7 +16,7 @@ whenToUse: 用户提到 3D 打印、FDM、可打印、修模型、STL/3MF、切�
   - `--from-file`：复用已有 GLB 跳过生成（测试/资产池）
 - **检测**：`printguard.py analyze <file> --height-mm 80`
 - **修复**：`printguard.py repair <file> -o out.stl --height-mm 80 [--no-orient]`
-- **概念图/拆件/材质迁移**：`lux3d_client.concept_image / part_split / material_transfer`（生成类任务，与生成同串行规则）
+- **概念图**：`lux3d_client.concept_image(key, prompt)`（生成类任务，与生成同串行规则；已实测 31s 出图，未接入交付链，可直接导入调用）
 - **自测**：`printguard.py selftest`（7 个检查用例，改动检测/修复逻辑后必跑）
 
 ## 硬规则
