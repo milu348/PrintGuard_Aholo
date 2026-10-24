@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "printguard"
+version = "0.4.0"
+description = "PrintGuard —— FDM 打印件的生成→可制造性校核→修复→交付（Lux3D + 几何工具链），MCP Server 形态"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "numpy",
+    "scipy",
+    "trimesh",
+    "manifold3d",
+    "scikit-image",
+    "requests",
+    "matplotlib",
+    "lxml",
+    "mcp>=1,<3",
+]
+
+[project.optional-dependencies]
+aholo = ["manycore-aholo-sdk-lux3d", "manycore-aholo-sdk-asset"]
+
+[project.scripts]
+printguard-mcp = "mcp_server:main"
+
+[tool.setuptools]
+py-modules = ["printguard", "pipeline", "lux3d_client", "mcp_server"]

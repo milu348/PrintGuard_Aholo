@@ -1,0 +1,10 @@
+secrets.local.json
+Aholo黑客松情报汇总.md
+.venv/
+__pycache__/
+*.pyc
+printguard.egg-info/
+output/
+.mplcache/
+.pip-tmp/
+.acl-recovery/
