@@ -10,7 +10,7 @@
 异步任务模式（生成/修复耗时长，MCP 调用立即返回 job_id，宿主轮询）：
   start_printguard_job(...) -> job_id
   check_printguard_job(job_id) -> status: queued|running|done|error
-                                + 产物绝对路径 + 内联诊断缩略图（ImageContent）
+                                + 交付件绝对路径（3MF + 渲染 GIF）+ 内联诊断缩略图
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ PrintGuard：把 Lux3D 生成的 3D 模型修成可 FDM 打印的 3MF 并交付�
 使用规则：
 1. height_mm（目标尺寸 mm）必须先向终端用户确认后传入，绝不猜测；
 2. 生成类任务（只给 prompt）全平台并发为 1：必须等 check_printguard_job 返回 done/error 再提交下一个；
-3. 交付以 printable.3mf 为打印基准；diagnostic_sheet.png 是缺陷着色诊断图（任务完成时随结果内联返回）；
+3. 交付 = printable.3mf（打印基准）+ turntable.gif（渲染预览）；诊断图（缺陷着色）仅内部供你查看讲解修复，不作为文件交付；
 4. risk 为 C/D 时先向用户逐项告知问题再交付；薄壁修不动时如实说"建议重新设计"，不假装能修。"""
 
 mcp = FastMCP("printguard", instructions=_INSTRUCTIONS)
@@ -81,7 +81,7 @@ def _run_job(job_id: str, kind: str, prompt: str | None, file_or_url: str | None
         else:  # repair
             src = _fetch_file(file_or_url, Path("output/jobs") / job_id)
             summary = run_repair(str(src), height_mm, name=job_id, out_dir="output/jobs")
-        files = {k: summary.get(k) for k in ("3mf", "sheet", "sheet_preview", "gif")}
+        files = {k: summary.get(k) for k in ("3mf", "gif")}
         meta = {k: summary.get(k) for k in ("risk", "watertight", "overhang_frac",
                                             "repair_steps")}
         with _JOBS_LOCK:
@@ -135,8 +135,9 @@ def start_printguard_job(prompt: str | None = None, height_mm: float | None = No
 
 @mcp.tool()
 def check_printguard_job(job_id: str):
-    """查询 PrintGuard 任务状态：queued/running/done/error；done 时返回产物本地绝对路径，
-    并内联附上诊断缩略图 sheet_preview.jpg（ImageContent，宿主可直接渲染；全尺寸图见路径）。"""
+    """查询 PrintGuard 任务状态：queued/running/done/error；done 时返回交付件
+    （printable.3mf + turntable.gif）本地绝对路径，并内联附上诊断缩略图
+    （ImageContent——缺陷着色图，供你查看讲解修复，非交付文件）。"""
     thumb = None
     with _JOBS_LOCK:
         job = _JOBS.get(job_id)

@@ -10,7 +10,7 @@ whenToUse: 用户提到 3D 打印、FDM、可打印、修模型、STL/3MF、切�
 
 - **环境**：一律用 `.venv\Scripts\python.exe`（勿用全局 python，依赖只在 venv 里）
 - **一条龙**：`pipeline.py "描述" --height-mm 100 [--quality fast|fine] [--style cartoon] [--from-file <glb>]`
-  → 生成→检测→修复→交付 `printable.3mf` + `diagnostic_sheet.png`（诊断报告图）+ `turntable.gif`（对话内预览）+ `report.json`
+  → 生成→检测→修复→交付 `printable.3mf` + `turntable.gif`（渲染预览）；诊断图为内部件（agent 讲解用）+ `report.json`
   - `--quality fast`（默认）：G1-Turbo+100k+自适应 pitch，全程 ~2min，结构件/快速迭代
   - `--quality fine`：G1+300k+0.3mm 细 pitch，~10min、文件大（交付以 3MF 为准），**手办/细节件必用**——G1 细节 +15%，且 0.8mm 粗 pitch 会静默抹掉 0.3mm 级特征（细 pitch 下薄壁/尾巴尖的警告更多也更真实）
   - `--from-file`：复用已有 GLB 跳过生成（测试/资产池）

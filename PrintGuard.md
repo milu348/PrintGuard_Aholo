@@ -53,7 +53,7 @@
   │      → Lux3D 生成（串行轮询）→ 本地检测/修复 → 交付件
   ├─ check_printguard_job(job_id)                 → 状态 + 产物绝对路径 + 内联诊断缩略图
   ├─ analyze_printability(file_or_url, height_mm) → 秒级诊断 JSON（免 key）
-  └─ 交付件：printable.3mf + diagnostic_sheet.png + turntable.gif (+ sheet_preview.jpg 供 MCP 内联 / report.json)
+  └─ 交付件：printable.3mf + turntable.gif（渲染预览）(+ diagnostic_sheet.png 内部诊断件 / report.json)
 ```
 
 技术栈：Python 3.13 + numpy/scipy + trimesh（体素/网格，manifold3d·skimage 后端）+ manycore SDK。
@@ -88,7 +88,7 @@ P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P
 
 | 维度 | 现状 |
 |---|---|
-| 交付物 | `printable.3mf` + `diagnostic_sheet.png`（缺陷着色+中文指标）+ `turntable.gif`（+ `sheet_preview.jpg` 内联缩略 / report.json） |
+| 交付物 | `printable.3mf` + `turntable.gif`（渲染预览）；`diagnostic_sheet.png`（缺陷着色+中文指标）转内部诊断件（v0.4.1，agent 内联讲解用，不作交付承诺） |
 | 已验证 | 5+ 条端到端真实生成流水线（fast/fine/图文输入，D→S/A 全部水密）、selftest 6/6、MCP stdio 协议回归、uvx 可安装包 |
 | 群核服务 | 文生/图生 3D ✓、Asset 上传 ✓（参考图上传用）；概念图已实测未接入（`lux3d_client.concept_image` 可直接调用）；拆件/材质迁移已移除（v0.5 评估）；官方多格式导出链已移除（v0.4，尺寸偏差） |
 | 检测项 | 水密性 / 悬垂 45° / 壁厚 EDT 三档 verdict / 风险评分 S-D ✓；小孔/间隙/内腔 v0.5 评估后暂缓（结论见日志），桥接/孤岛未做 |
@@ -126,6 +126,7 @@ P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P
 - **v0.4 Agent 工具样式对齐（无服务器读取方案落地）**：产物改**绝对路径**（uvx 分发时宿主 cwd 不确定的兜底）；任务 done 时 `check_printguard_job` **内联返回诊断缩略图** `sheet_preview.jpg`（PIL 降采样 JPEG，实测 11KB，全尺寸 PNG 67KB 留路径）——agent 在对话内直接"看"诊断图讲解缺陷，零外部服务器（与 playwright 截图同款协议机制）；`quality`/`style` 改 Literal 枚举（JSON Schema 自动带 enum）；`FastMCP(instructions=...)` 随 initialize 下发四条硬规则；错误统一 raise（宿主收 is_error）。**顺手修掉第二个潜伏 bug**：`prompt` 原为 schema 必填 → 不带 prompt 的修复任务从来过不了 pydantic 校验（旧测试未覆盖 repair 路径）；改为可选 + 函数体显式校验，`height_mm` 同理——schema 必填会逼宿主 LLM 编数字，违反"绝不猜尺寸"，显式报错顶回去问用户才是正确契约。真机回归：repair job 全链路 INLINE PASS（done 块=['text','image']，四路径均为绝对值）。
 - **v0.5 P1 检测项评估：实现 → 验证 → 决策暂缓（决策过程完整留档）**：#4 间隙 / #5 小孔 / #6 密闭腔的检测与修复全部实现并跑过 selftest（8/10），收尾前做产品价值复盘，结论是**整体撤回**（printguard.py 回滚至 v0.4.0 基线）。理由：① 对目标场景（AI 生成手办/结构件）三项均非打印失败主因——P0（水密/壁厚/悬垂）才是翻车重灾区；② 小孔缩径的创客常规解法（打印后钻孔）成本低于预防；③ 密闭腔用切片器 100% 填充零成本规避，自动钻排气孔反而明显改几何；④ 间隙检测受体素分辨率硬限制（≈2×pitch，130mm 模型上 ≈0.54mm，**大于 0.4mm 阈值本身**），verdict 天然偏软，混进报告会稀释四个硬指标的公信力；⑤ 自动修复价值/风险比不划算（gap_fuse 焊死窄缝会改设计意图、扩孔 +0.06mm 不如建模端 +5% 精确）。**过程中撞出的已知盲区（留档，暂不修）**：壁厚分析网格经 fill_holes，空心件（省材料打印的常见做法）会被当实心、壁厚虚报为整体尺寸——修复方案已验证可行（分析网格 fill=False，~4 行，含空心盒正确报 5mm 壳厚的 selftest 已跑通），待后续与空心件场景需求一起评估。
 - **v0.5 功能收敛（第二轮删减）**：`material_transfer`/`part_split` 从 lux3d_client 移除（与核心主张无关且拆件对单连体 AI 生成件无效，git 历史可找回）；`concept_image` 保留——它是完整实现且实测通过的独立函数（31s 出图），可直接导入调用，无需额外 API 代码，是否接入交付链留待后续决策。B 类未验证项（uvx 端到端/MCP 生成 job/图文输入/URL 输入分支）本轮决策暂不验证，留档待测。
+- **v0.4.1 产品流程对齐（用户定义最终流程）**：用户对话 → Lux3D 生成（模型文件）→ PrintGuard 可制造校验+修复（核心工作，渲染与诊断均本地生成——**Lux3D API 不出渲染图，outputs 实证仅 GLB/ZIP**）→ 交付收敛为 **printable.3mf + turntable.gif**；diagnostic_sheet.png/sheet_preview.jpg 转为内部诊断件（agent 内联查看讲解修复用，不作交付承诺，磁盘仍生成）。MCP 结果 files 仅含 3MF+GIF，instructions 同步更新。
 
 
 ## MCP 接入（已落地）

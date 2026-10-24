@@ -46,7 +46,7 @@ Lux3D 生成模型 + 确定性几何工具链（水密/悬垂/壁厚检测，体
 | 配方 | G1-Turbo + 100k + 自适应 pitch | G1 + 300k + 0.3mm 细 pitch |
 | 耗时 | ~2 分钟 | ~10 分钟 |
 
-Agent 会按场景自动选择；交付物为 `printable.3mf + diagnostic_sheet.png + turntable.gif`。
+Agent 会按场景自动选择；交付物为 `printable.3mf` + `turntable.gif`（渲染预览；诊断图作为内部诊断件供 agent 讲解）。
 
 ## 本地开发
 

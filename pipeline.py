@@ -27,9 +27,10 @@ QUALITY_PRESETS = {
 
 
 def deliver_outputs(fixed, after, steps, out) -> dict:
-    """交付件：printable.3mf（打印基准）+ diagnostic_sheet.png（报告+渲染合一）+ turntable.gif（准 3D）
-    + sheet_preview.jpg（诊断图缩略，供 MCP 内联给 agent 看）。路径一律绝对值
-    （uvx 分发时宿主 cwd 不确定，绝对路径是无服务器形态的兜底）。单项失败不阻塞其余交付。"""
+    """交付件：printable.3mf（打印基准）+ turntable.gif（渲染预览）。
+    diagnostic_sheet.png（缺陷着色+中文指标）与 sheet_preview.jpg 为内部诊断件：
+    供 agent 内联查看、讲解修复，不作为交付承诺。路径一律绝对值
+    （uvx 分发时宿主 cwd 不确定的兜底）。单项失败不阻塞其余交付。"""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     d = {}
