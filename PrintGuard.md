@@ -71,9 +71,9 @@
 | 1 | 必须水密 | 非流形边、孔洞、自交、退化面 | manifold3d 体素重构/填洞 | P0 | ✅ |
 | 2 | 最小壁厚 ≥0.8mm | 体素 EDT 中轴法（T=2D-p，fail/warn/pass 三档） | 闭环体素增厚（v2，修不动如实报） | P0 | ✅ |
 | 3 | 悬垂 ≤45° | 面法线 vs 重力方向 | 自动搜索最优摆放角（17 候选） | P0 | ✅ |
-| 4 | 最小间隙 ≥0.4mm | 距离场 | 间隙撑开或合并 | P1 | — |
-| 5 | 小孔收缩（<3mm） | 截面圆拟合 | 补偿扩孔 +5~8% | P1 | — |
-| 6 | 密闭内腔 | 壳体包含检测 | 自动开排气孔 | P1 | — |
+| 4 | 最小间隙 ≥0.4mm | 距离场 | 间隙撑开或合并 | P1 | —（v0.5 评估暂缓） |
+| 5 | 小孔收缩（<3mm） | 截面圆拟合 | 补偿扩孔 +5~8% | P1 | —（v0.5 评估暂缓） |
+| 6 | 密闭内腔 | 壳体包含检测 | 自动开排气孔 | P1 | —（v0.5 评估暂缓） |
 | 7 | 底面能贴床 | 底面接触面积/平面度 | 摆放目标函数含床面接触项 | P1 | ✅（随 #3） |
 | 8 | 桥接 ≤10mm | 截面分析 | 摆放调整 / 底部填实 | P2 | — |
 | 9 | 无孤岛 | 逐层截面连通性 | 摆放调整 | P2 | — |
@@ -91,7 +91,7 @@ P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P
 | 交付物 | `printable.3mf` + `diagnostic_sheet.png`（缺陷着色+中文指标）+ `turntable.gif`（+ `sheet_preview.jpg` 内联缩略 / report.json） |
 | 已验证 | 5+ 条端到端真实生成流水线（fast/fine/图文输入，D→S/A 全部水密）、selftest 6/6、MCP stdio 协议回归、uvx 可安装包 |
 | 群核服务 | 文生/图生 3D ✓、Asset 上传 ✓（参考图上传用）；概念图/拆件/材质迁移已实测未接入交付链（`lux3d_client` 备用）；官方多格式导出链已移除（v0.4，尺寸偏差） |
-| 检测项 | 水密性 / 悬垂 45° / 壁厚 EDT 三档 verdict / 风险评分 S-D ✓；小孔/间隙/内腔/桥接/孤岛未做（见功能清单状态列） |
+| 检测项 | 水密性 / 悬垂 45° / 壁厚 EDT 三档 verdict / 风险评分 S-D ✓；小孔/间隙/内腔 v0.5 评估后暂缓（结论见日志），桥接/孤岛未做 |
 
 以下为按时间的开发日志（决策与踩坑的完整记录，续作时先读这里）：
 
@@ -124,6 +124,7 @@ P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P
 - **v0.4 顺手修掉一个潜伏 bug**：`_solid_grid` 对**大面片网格**（低多边形盒子等，单三角形边长远大于 pitch）做 `voxelized()` 时，subdivide 细分轮数超 trimesh 默认 `max_iter=10` 直接抛 "max_iter exceeded"——此前测试目标全是 marching-cubes 细碎三角形故未暴露，被新 MCP 回归目标（合成盒子 STL@80mm）撞出。修复：`voxelized(pitch, max_iter=64)`；selftest 增至 7 项（新增 big_facet_reload：大面片 STL 重载→80mm→wall pass）。
 - **v0.4 开源发布（v0.4.0 → github.com/milu348/PrintGuard_Aholo）**：git init 首推（main + tag v0.4.0），远程原占位 README 经 --force-with-lease 替换；新增 MIT LICENSE（署名 PrintGuard contributors）与 docs/img 示例图（README 交付示例节，九尾狐 fast 档案例）；test_mcp_client ROOT 改 __file__ 相对（clone 即可跑）、PrintGuard.md MCP 配置示例路径通用化；情报汇总与全部运行产物不入库（.gitignore 核查 CLEAN）。打包冒烟：setuptools 由 pyproject 构建 wheel 成功（printguard-0.4.0，24KB，四模块+入口），uvx 安装链路打包层验证通过。沙箱注意：pip 的 build 子进程写临时目录会被沙箱拦（git/pwsh cmdlet 不受影响），构建验证需提权一次；venv 无 pip（--without-pip 遗留）时用全局 python -m pip。
 - **v0.4 Agent 工具样式对齐（无服务器读取方案落地）**：产物改**绝对路径**（uvx 分发时宿主 cwd 不确定的兜底）；任务 done 时 `check_printguard_job` **内联返回诊断缩略图** `sheet_preview.jpg`（PIL 降采样 JPEG，实测 11KB，全尺寸 PNG 67KB 留路径）——agent 在对话内直接"看"诊断图讲解缺陷，零外部服务器（与 playwright 截图同款协议机制）；`quality`/`style` 改 Literal 枚举（JSON Schema 自动带 enum）；`FastMCP(instructions=...)` 随 initialize 下发四条硬规则；错误统一 raise（宿主收 is_error）。**顺手修掉第二个潜伏 bug**：`prompt` 原为 schema 必填 → 不带 prompt 的修复任务从来过不了 pydantic 校验（旧测试未覆盖 repair 路径）；改为可选 + 函数体显式校验，`height_mm` 同理——schema 必填会逼宿主 LLM 编数字，违反"绝不猜尺寸"，显式报错顶回去问用户才是正确契约。真机回归：repair job 全链路 INLINE PASS（done 块=['text','image']，四路径均为绝对值）。
+- **v0.5 P1 检测项评估：实现 → 验证 → 决策暂缓（决策过程完整留档）**：#4 间隙 / #5 小孔 / #6 密闭腔的检测与修复全部实现并跑过 selftest（8/10），收尾前做产品价值复盘，结论是**整体撤回**（printguard.py 回滚至 v0.4.0 基线）。理由：① 对目标场景（AI 生成手办/结构件）三项均非打印失败主因——P0（水密/壁厚/悬垂）才是翻车重灾区；② 小孔缩径的创客常规解法（打印后钻孔）成本低于预防；③ 密闭腔用切片器 100% 填充零成本规避，自动钻排气孔反而明显改几何；④ 间隙检测受体素分辨率硬限制（≈2×pitch，130mm 模型上 ≈0.54mm，**大于 0.4mm 阈值本身**），verdict 天然偏软，混进报告会稀释四个硬指标的公信力；⑤ 自动修复价值/风险比不划算（gap_fuse 焊死窄缝会改设计意图、扩孔 +0.06mm 不如建模端 +5% 精确）。**过程中撞出的已知盲区（留档，暂不修）**：壁厚分析网格经 fill_holes，空心件（省材料打印的常见做法）会被当实心、壁厚虚报为整体尺寸——修复方案已验证可行（分析网格 fill=False，~4 行，含空心盒正确报 5mm 壳厚的 selftest 已跑通），待后续与空心件场景需求一起评估。
 
 
 ## MCP 接入（已落地）
@@ -169,4 +170,4 @@ v0.4 起 Agent 工具样式对齐：`instructions` 随 initialize 下发四条�
 | M4 生成接入 | 自研 lux3d 客户端，接入 DSH skill 指令（编排、报告话术、追问如"拆两件"→part-split、未给尺寸先询问） | 一句话 → STL/3MF + HTML 报告全流程跑通 |
 | M5 扩展 | P1/P2 检测项、预生成资产池、（可选）MCP 封装、headless 切片实测 | 全流程稳定复现 3 次无故障 |
 
-> **实际进度**：M1–M4 完成；M5 部分完成（MCP 封装 ✓、资产池 ✓、fast/fine 双档 ✓；P1/P2 检测项与切片实测未做）。
+> **实际进度**：M1–M4 完成；M5 部分完成（MCP 封装 ✓、资产池 ✓、fast/fine 双档 ✓；P1/P2 检测项与切片实测未做——P1 经 v0.5 评估后决定暂缓，见开发日志）。
