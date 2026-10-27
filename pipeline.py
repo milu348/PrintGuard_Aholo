@@ -157,6 +157,10 @@ def run_pipeline(prompt: str, height_mm: float, quality: str = "fast",
                        f"->{after['checks']['watertight']['watertight']}"),
         "overhang_frac": (f"{before['checks']['overhang']['bad_frac']}"
                           f"->{after['checks']['overhang']['bad_frac']}"),
+        "open_overhang_frac": (f"{before['checks']['overhang'].get('open_frac', '-')}"
+                               f"->{after['checks']['overhang'].get('open_frac', '-')}"),
+        "bridged_frac": (f"{before['checks']['overhang'].get('bridged_frac', '-')}"
+                         f"->{after['checks']['overhang'].get('bridged_frac', '-')}"),
         **deliver,
     }
     return summary

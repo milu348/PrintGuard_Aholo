@@ -53,7 +53,7 @@ Agent 会按场景自动选择；交付物为 `printable.3mf` + `turntable.gif`�
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e .
-.venv\Scripts\python.exe printguard.py selftest   # 7 个检查用例
+.venv\Scripts\python.exe printguard.py selftest   # 8 个检查用例
 .venv\Scripts\python.exe pipeline.py "测试" --height-mm 100
 .venv\Scripts\python.exe mcp_server.py            # MCP stdio
 ```

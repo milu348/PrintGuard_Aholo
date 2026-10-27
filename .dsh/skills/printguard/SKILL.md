@@ -17,7 +17,7 @@ whenToUse: 用户提到 3D 打印、FDM、可打印、修模型、STL/3MF、切�
 - **检测**：`printguard.py analyze <file> --height-mm 80`
 - **修复**：`printguard.py repair <file> -o out.stl --height-mm 80 [--no-orient]`
 - **概念图**：`lux3d_client.concept_image(key, prompt)`（生成类任务，与生成同串行规则；已实测 31s 出图，未接入交付链，可直接导入调用）
-- **自测**：`printguard.py selftest`（7 个检查用例，改动检测/修复逻辑后必跑）
+- **自测**：`printguard.py selftest`（8 个检查用例，改动检测/修复逻辑后必跑）
 
 ## 硬规则
 
@@ -29,12 +29,12 @@ whenToUse: 用户提到 3D 打印、FDM、可打印、修模型、STL/3MF、切�
 ## 报告解读话术
 
 - risk **S/A**：可放心打印；**B**：建议看悬垂/壁厚明细；**C/D**：逐项列问题后再交付。
-- 悬垂 bad_frac 是几何法估计，堆叠贴合面会误报——话术说"约 X% 表面需要支撑或调整摆放"。
+- 悬垂指标已含向下支撑探测：open_frac=真悬空需支撑，bridged=桥接/贴材料（无需支撑）；话术用"约 X% 表面真正悬空"。
 - 壁厚 **warn** 是量化保守带（±2*pitch），**fail** 才需要动作（加厚或重设计）。
-- 交付时给用户：`printable.3mf` 路径 + `diagnostic_sheet.png` + `turntable.gif`，并简述"修了什么、为什么"。
+- 交付时给用户：`printable.3mf` 路径 + `turntable.gif`，并简述"修了什么、为什么"。
 
 ## 已知边界
 
-- 悬垂为几何法（无支撑射线检查）；体素重构有损（pitch 量级）；曲面壁厚 warn 偏保守。
+- 悬垂为几何法+体素向下探测（10mm）；体素重构有损（pitch 量级）；曲面壁厚 warn 偏保守。
 - 真实 Lux3D 输出是"自交壳汤"（非流形边数百），体素重构是必需修复路径，非 bug。
 - 中文路径下 venv 的 ensurepip 会失败：用 `--without-pip` + 全局 `pip --python` 安装。

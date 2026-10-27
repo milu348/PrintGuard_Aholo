@@ -47,12 +47,75 @@ def overhang_mask(m: trimesh.Trimesh):
 
 
 def overhang_stats(m: trimesh.Trimesh):
-    """几何法悬垂统计（基于 overhang_mask）。"""
+    """几何法悬垂统计（基于 overhang_mask）。orient 沿用（快，候选姿态间可比）；
+    对外交付的诚实数字见 _support_split（悬垂面向下支撑检查）。"""
     area = m.area_faces
     down, bed = overhang_mask(m)
     bad_area = float(area[down].sum())
     total = float(area.sum())
     return bad_area, (bad_area / total if total else 0.0), float(area[bed].sum())
+
+
+BRIDGE_MM = 10.0  # mm：悬垂面向下探测距离，此范围内有材料=桥接/贴材料（无需支撑)
+
+
+def _raw_grid(m: trimesh.Trimesh, pitch: float) -> np.ndarray:
+    """raw 体素网格（无 closing/fill）——支撑探测要的是真实几何，
+    不用修复路径的实心化网格（closing 会凭空造出"下方材料"）。"""
+    w = m.copy()
+    w.process(validate=True)
+    try:
+        trimesh.repair.fill_holes(w)
+    except Exception:
+        pass
+    # 大面片网格（低多边形盒子等）细分轮数会超 trimesh 默认 max_iter=10，放宽到 64
+    return w.voxelized(pitch, max_iter=64).matrix.astype(bool)
+
+
+def _support_split(m: trimesh.Trimesh) -> dict | None:
+    """#3 悬垂支撑检查：对每个悬垂面（法线 >45° 朝下、非贴床）沿重力方向在
+    raw 体素网格中向下探测 BRIDGE_MM——下方有材料=桥接/贴材料（无需支撑），
+    全程无材料=真悬空（需支撑）。修复几何法的堆叠贴合面误报
+    （该误报类是开发日志挂了很多轮的已知缺陷）。
+    返回 None = 面积为零（无法判断）。"""
+    down, _bed = overhang_mask(m)
+    area = m.area_faces
+    total = float(area.sum())
+    if total <= 0:
+        return None
+    ext = float(max(m.extents))
+    pitch = max(0.15, min(0.4, ext / 300.0))
+    while (ext / pitch) ** 3 > 1.5e8 and pitch < 0.8:  # 内存护栏
+        pitch *= 1.35
+    g = _raw_grid(m, pitch)
+    out = {"bridge_lookup_mm": BRIDGE_MM, "pitch_mm": round(pitch, 2),
+           "method": "悬垂面沿重力方向在 raw 体素网格向下探测（量化 ±1*pitch）"}
+    if not g.any() or not down.any():
+        out.update({"open_area_mm2": 0.0, "open_frac": 0.0,
+                    "bridged_area_mm2": 0.0, "bridged_frac": 0.0})
+        return out
+    cen = m.triangles_center[down]
+    bmin = np.asarray(m.bounds[0], float)
+    dims = np.asarray(g.shape)
+    idx = np.clip(np.floor((cen - bmin) / pitch).astype(int), 0, dims - 1)
+    ix, iy, iz = idx[:, 0], idx[:, 1], idx[:, 2]
+    k_max = max(1, int(BRIDGE_MM / pitch))
+    supported = np.zeros(int(down.sum()), bool)
+    for k in range(1, k_max + 1):
+        zkk = iz - k
+        ok = zkk >= 0
+        if not ok.any():
+            break
+        supported[ok] |= g[ix[ok], iy[ok], zkk[ok]]
+        if supported.all():
+            break
+    open_a = float(area[down][~supported].sum())
+    bridged_a = float(area[down][supported].sum())
+    out.update({"open_area_mm2": round(open_a, 1),
+                "open_frac": round(open_a / total, 4),
+                "bridged_area_mm2": round(bridged_a, 1),
+                "bridged_frac": round(bridged_a / total, 4)})
+    return out
 
 
 def watertight_stats(m: trimesh.Trimesh) -> dict:
@@ -94,24 +157,33 @@ def analyze_mesh(m: trimesh.Trimesh, thickness: bool | None = None) -> dict:
     wt = watertight_stats(m)
     bad_area, oh_frac, bed_area = overhang_stats(m)
     if thickness is None:
-        # 非水密（壳汤/破面）时体素壁厚无意义，自动跳过
+        # 非水密（壳汤/破面）时体素分析无意义，自动跳过
         thickness = bool(wt["watertight"])
     if thickness:
         wall = wall_thickness(m)
+        sup = _support_split(m)
     else:
         wall = {"verdict": "skipped", "reason": "非水密，体素壁厚无意义（先修复）"}
-    grade, score = risk_grade(wt["watertight"], oh_frac,
+        sup = None
+    # 风险评分用"真悬空"占比（有支撑检查时）——桥接/贴材料不需支撑，不该扣分
+    eff_frac = sup["open_frac"] if sup and "open_frac" in sup else oh_frac
+    grade, score = risk_grade(wt["watertight"], eff_frac,
                               wt["nonmanifold_edges"], wt["degenerate_faces"], wall)
+    overhang = {
+        "threshold_deg": 45,
+        "bad_area_mm2": round(bad_area, 1),
+        "bad_frac": round(oh_frac, 4),
+        "bed_contact_mm2": round(bed_area, 1),
+    }
+    if sup:
+        overhang.update(sup)
+    else:
+        overhang["support_lookup"] = "skipped（非水密，体素支撑探测无意义）"
     return {
         "bbox_mm": [round(float(x), 2) for x in m.extents],
         "checks": {
             "watertight": wt,
-            "overhang": {
-                "threshold_deg": 45,
-                "bad_area_mm2": round(bad_area, 1),
-                "bad_frac": round(oh_frac, 4),
-                "bed_contact_mm2": round(bed_area, 1),
-            },
+            "overhang": overhang,
             "wall_thickness": wall,
         },
         "risk": {"grade": grade, "score": score},
@@ -384,6 +456,7 @@ def render_diagnostic_sheet(m: trimesh.Trimesh, report: dict, steps, out_png: st
     wt = checks.get("watertight") or {}
     oh = checks.get("overhang") or {}
     risk = report.get("risk") or {}
+    gmin = oh.get("min_wall_mm")
     lines = [
         "PrintGuard 诊断报告",
         f"风险: {risk.get('grade', '-')} ({risk.get('score', '-')}/100)",
@@ -391,6 +464,8 @@ def render_diagnostic_sheet(m: trimesh.Trimesh, report: dict, steps, out_png: st
         f"水密性: {'通过' if wt.get('watertight') else '未通过'}",
         f"   边界边 {wt.get('boundary_edges', '-')} / 非流形边 {wt.get('nonmanifold_edges', '-')}",
         f"悬垂(>45°): {oh.get('bad_frac', 0) * 100:.1f}%",
+        f"   真悬空(需支撑): {oh.get('open_frac', 0) * 100:.1f}%",
+        f"   桥接/贴材料(≤10mm): {oh.get('bridged_frac', 0) * 100:.1f}%",
         f"   问题面积 {oh.get('bad_area_mm2', '-')} mm²",
         f"最小壁厚(>=0.8mm): {wall.get('min_wall_mm', '-')} mm [{wall.get('verdict', '-')}]",
         "",
@@ -496,6 +571,17 @@ def _healthy_cube() -> trimesh.Trimesh:
     return c
 
 
+def _stacked_boxes() -> trimesh.Trimesh:
+    """两层正方体上下叠放，中间 0.3mm 接触面（#4 间隙 fail 用例）"""
+    base = trimesh.creation.box(extents=[20, 20, 5])
+    base.apply_translation([0, 0, 2.5])
+    a = trimesh.creation.box(extents=[9.85, 20, 8])
+    a.apply_translation([-5.075, 0, 9])
+    b = a.copy()
+    b.apply_translation([10.15, 0, 0])
+    return trimesh.util.concatenate([base, a, b])
+
+
 def selftest(outdir: str = "output") -> int:
     out = Path(outdir)
     out.mkdir(parents=True, exist_ok=True)
@@ -508,6 +594,7 @@ def selftest(outdir: str = "output") -> int:
         "overhang_t": (_overhang_t(), False, (5300, 5900), None),
         "thin_plate": (_thin_plate(), False, (750, 1050), "warn"),
         "healthy_cube": (_healthy_cube(), False, (3040, 3710), "pass"),
+        "stacked_boxes": (_stacked_boxes(), False, (4950, 5350), "pass"),
     }
     summary = {}
     all_ok = True
@@ -532,6 +619,12 @@ def selftest(outdir: str = "output") -> int:
         case_ok = (after["checks"]["watertight"]["watertight"]
                    and (rebuilt == rebuild_expected) and vol_ok and ext_ok
                    and wall_ok)
+        if name == "stacked_boxes":
+            # 验证：堆叠贴合面不再被误判为悬垂
+            gap = before["checks"]["overhang"]
+            ok = (gap.get("open_frac", 1.0) < 0.02
+                  and gap.get("bridged_area_mm2", 0) >= 300)
+            case_ok = case_ok and ok
         all_ok &= case_ok
         summary[name] = {
             "ok": case_ok,
