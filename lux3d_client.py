@@ -17,19 +17,27 @@ POLL_SEC = 15
 TIMEOUT_SEC = 20 * 60
 
 
-def load_key() -> str:
-    """优先环境变量 AHOLO_API_KEY（MCP 配置的 env 字段），回退 secrets.local.json。"""
+def load_key(explicit: str | None = None) -> str:
+    """取 API Key，优先级：显式入参（公网部署由用户填写）> 环境变量 > 本地 secrets.local.json。
+
+    公网部署（魔搭等托管平台）里不能把 key 写进镜像/环境变量，必须由调用方
+    通过工具参数 api_key 传入；本地开发仍可用环境变量或 secrets.local.json。"""
     import os
-    env = os.environ.get("AHOLO_API_KEY", "").strip()
-    if env:
-        return env
-    raw = Path(KEY_FILE).read_text(encoding="utf-8").strip()
-    s = json.loads(raw) if raw.startswith('"') else raw
-    if ":" in s:
-        s = s.split(":", 1)[1].strip()
-    if not s:
-        raise SystemExit("API key 为空")
-    return s
+    for cand in (explicit, os.environ.get("AHOLO_API_KEY", "")):
+        s = (cand or "").strip()
+        if s:
+            return s
+    p = Path(KEY_FILE)
+    if p.exists():
+        raw = p.read_text(encoding="utf-8").strip()
+        s = json.loads(raw) if raw.startswith('"') else raw
+        if ":" in s:
+            s = s.split(":", 1)[1].strip()
+        if s:
+            return s
+    raise SystemExit(
+        "缺少 AHOLO API Key：公网调用请在工具参数 api_key 传入，"
+        "本地可设置环境变量 AHOLO_API_KEY 或填 secrets.local.json")
 
 
 def create_task(key: str, prompt: str, version: str = "G1-Turbo",
@@ -47,7 +55,7 @@ def create_task(key: str, prompt: str, version: str = "G1-Turbo",
     if style:
         body["style"] = style
     if image:  # 可选参考图（图+文同时输入）：URL 直传，本地文件先走 Asset 上传
-        body["img"] = image if image.startswith(("http://", "https://")) else upload_mesh(image)
+        body["img"] = image if image.startswith(("http://", "https://")) else upload_mesh(image, key=key)
     for attempt in range(3):
         r = requests.post(f"{BASE}/lux3d/v1/generate/text-to-3d/task/create",
                           headers={"Authorization": key}, json=body, timeout=30)
@@ -113,16 +121,16 @@ def download_glbs(outputs: list, name: str,
 
 # ---------- Asset 上传（本地文件 -> 公网 URL；参考图上传用） ----------
 
-def _client_config():
+def _client_config(key: str | None = None):
     """SDK v1.9+：create_*_client(config)，config 显式带 key 与 region。"""
     from manycore.aholo_sdk_core import AholoClientConfig
-    return AholoClientConfig(api_key=load_key(), region="cn")
+    return AholoClientConfig(api_key=load_key(key), region="cn")
 
 
-def upload_mesh(path) -> str:
+def upload_mesh(path, key: str | None = None) -> str:
     """本地文件 -> 公网 URL（官方 Asset SDK，内置分块上传）。"""
     from manycore.aholo_sdk_asset import create_asset_client
-    asset = create_asset_client(_client_config())
+    asset = create_asset_client(_client_config(key))
     res = asset.upload_file(str(path))
     return res.url
 
@@ -159,7 +167,7 @@ def concept_image(key: str, prompt: str, image: str | None = None,
     """multimodal-to-image：概念图（纯文案或图文）。返回图片路径。"""
     body = {"prompt": prompt}
     if image:
-        body["img"] = image if image.startswith(("http://", "https://")) else upload_mesh(image)
+        body["img"] = image if image.startswith(("http://", "https://")) else upload_mesh(image, key=key)
     r = requests.post(f"{BASE}/lux3d/v1/generate/multimodal-to-image/task/create",
                       headers={"Authorization": key}, json=body, timeout=30)
     d = r.json()

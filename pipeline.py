@@ -93,9 +93,11 @@ def run_pipeline(prompt: str, height_mm: float, quality: str = "fast",
                  style: str = "photorealistic", image: str | None = None,
                  version: str | None = None, face_count: int | None = None,
                  from_file: str | None = None, name: str | None = None,
-                 out_dir: str = "output/runs", no_orient: bool = False) -> dict:
+                 out_dir: str = "output/runs", no_orient: bool = False,
+                 api_key: str | None = None) -> dict:
     """一条龙核心（CLI 与 MCP 复用）。返回 summary dict（失败时含 failed 标记）。
-    image：可选参考图（本地路径或 URL），与 prompt 同时使用（文生 3D 的 img 字段）。"""
+    image：可选参考图（本地路径或 URL），与 prompt 同时使用（文生 3D 的 img 字段）。
+    api_key：调用方自带 API Key（公网部署必填）；缺省回退环境变量/本地 secrets 文件。"""
     q = QUALITY_PRESETS[quality]
     version = version or q["version"]
     face_count = face_count or q["face_count"]
@@ -111,7 +113,7 @@ def run_pipeline(prompt: str, height_mm: float, quality: str = "fast",
         raw_glb = Path(from_file)
         print(f"[skip-gen] from-file: {raw_glb}", flush=True)
     else:
-        key = load_key()
+        key = load_key(api_key)
         tid = create_task(key, prompt, version=version,
                           face_count=face_count, style=style, image=image)
         print(f"[gen] task={tid} version={version} mode={quality} ...", flush=True)

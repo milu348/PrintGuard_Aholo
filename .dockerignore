@@ -1,0 +1,10 @@
+.git
+.venv
+output
+docs/img
+*.pyc
+__pycache__
+.mplcache
+secrets.local.json
+*.egg-info
+.opencode

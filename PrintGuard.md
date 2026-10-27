@@ -16,9 +16,9 @@
 | 修复粒度 | 自动修复 + 报告带科普解释，不逐项阻塞用户 |
 | 尺寸策略 | `aiPredictSize=false`；本地归一化后按用户指定 mm 确定性缩放；未给尺寸时先询问 |
 | 模型版本 | 测试迭代用 G1-Turbo（快、可白模）；正式资产用 G1（质量优先） |
-| Python 环境 | 工作区内建 `.venv/`，不污染全局；中文路径下 venv 的 ensurepip 会失败，用 `--without-pip` + 全局 `pip --python` 安装 |
-| 密钥 | `secrets.local.json`（已 gitignore），运行时注入 `AHOLO_API_KEY` 环境变量 |
-| MCP 形态 | 仅 stdio（桌面宿主：Claude Desktop/Cursor/DSH）；产物绝对路径 + 诊断缩略图内联，不做托管/COS URL（v0.4） |
+| Python 环境 | **Linux / WSL**（不再兼容 Windows）；工作区内建 `.venv/`（uv 管理的 CPython 3.13），不污染系统 Python；命令一律 `.venv/bin/python` |
+| 密钥 | 本地：`secrets.local.json` / 环境变量 `AHOLO_API_KEY`；**公网部署：调用方在工具参数 `api_key` 传入**（不落盘、不进日志） |
+| MCP 形态 | 双形态：stdio（桌面宿主 Claude Desktop/Cursor/DSH，产物本地绝对路径）+ **streamable-http（云端托管，产物签名下载链接）**；诊断缩略图内联返回 |
 
 ## API 要点（官方 OpenAPI v2.0，网关 https://api.aholo3d.cn）
 
@@ -49,11 +49,15 @@
 
 ```
 用户（自然语言） → Agent 宿主（MCP 工具 / skill 指令编排）
-  ├─ start_printguard_job(prompt, height_mm, quality, style, image?, file_or_url?)
+  ├─ start_printguard_job(prompt, height_mm, quality, style, image?, file_or_url?, api_key?)
   │      → Lux3D 生成（串行轮询）→ 本地检测/修复 → 交付件
-  ├─ check_printguard_job(job_id)                 → 状态 + 产物绝对路径 + 内联诊断缩略图
+  ├─ check_printguard_job(job_id)                 → 状态 + 交付件（本地路径 / 签名下载链接）+ 内联诊断缩略图
   ├─ analyze_printability(file_or_url, height_mm) → 秒级诊断 JSON（免 key）
   └─ 交付件：printable.3mf + turntable.gif（渲染预览）(+ diagnostic_sheet.png 内部诊断件 / report.json)
+
+云端（streamable-http）额外暴露：
+  GET {base}/healthz                              → 存活探针
+  GET {base}/files/{job_id}/{name}?exp=..&sig=..  → 交付件签名下载（HMAC + 限时）
 ```
 
 技术栈：Python 3.13 + numpy/scipy + trimesh（体素/网格，manifold3d·skimage 后端）+ manycore SDK。
@@ -84,12 +88,15 @@ P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P
 
 ## 当前进度
 
-### 状态速览（v0.3.1）
+### 状态速览（v0.5 云端化）
 
 | 维度 | 现状 |
 |---|---|
+| 运行环境 | **Linux / WSL only**（Python ≥3.11，实测 3.13.18 + uv 管理的 CPython）；不再兼容 Windows |
 | 交付物 | `printable.3mf` + `turntable.gif`（渲染预览）；`diagnostic_sheet.png`（缺陷着色+中文指标）转内部诊断件（v0.4.1，agent 内联讲解用，不作交付承诺） |
-| 已验证 | 5+ 条端到端真实生成流水线（fast/fine/图文输入，D→S/A 全部水密）、selftest 6/6、MCP stdio 协议回归、uvx 可安装包 |
+| 服务形态 | stdio（本地桌面宿主，产物本地绝对路径）+ **streamable-http（云端托管，产物签名下载链接）** |
+| 密钥 | 本地 env/secrets 文件；**公网由用户在 `api_key` 参数传入**，不落盘不进日志 |
+| 已验证 | 5+ 条端到端真实生成流水线（fast/fine/图文输入，D→S/A 全部水密）、selftest 8 项、MCP stdio 协议回归、**MCP over HTTP 回归（签名下载 + 防篡改）**、uvx 可安装包 |
 | 群核服务 | 文生/图生 3D ✓、Asset 上传 ✓（参考图上传用）；概念图已实测未接入（`lux3d_client.concept_image` 可直接调用）；拆件/材质迁移已移除（v0.5 评估）；官方多格式导出链已移除（v0.4，尺寸偏差） |
 | 检测项 | 水密性 / 悬垂 45° + 体素向下支撑探测（10mm） / 壁厚 EDT 三档 verdict / 风险评分 S-D ✓；小孔/间隙/内腔 v0.5 评估后暂缓（结论见日志），桥接/孤岛未做 |
 
@@ -133,31 +140,60 @@ P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P
   - selftest 新增 stacked_boxes 用例（两层正方体上下叠放，中间 0.3mm 接触面）：before 过 open_frac < 0.02 且 bridged_area_mm2 ≥ 300mm²，修复后 open_frac ≈ 0，验证通过。
   - 兼容性：orient 仍用几何法（快，候选姿态间可比）；analyze_mesh 报告 open_frac/bridged_frac，风险评分改用 open_frac；诊断图面板新增"真悬空/桥接"拆解行；风险评分仅按真悬空扣分，桥接不扣分。
   - 复杂度：约 60 行新增代码，复用 raw 体素网格，pitch 自适应（ext/300，0.15-0.4mm，内存护栏），selftest 增至 8 项（新增 stacked_boxes）。
+- **v0.5 Linux 迁移（Windows → WSL，去 Windows 兼容）**：项目开发期在 Windows，现整体迁到 Linux/WSL。改动：① 文档与 skill 里的 `.venv\Scripts\python.exe` / PowerShell 安装步骤全部换成 `.venv/bin/python` + bash/uv；② `test_mcp_client.py` 改为 Linux 路径并补 api_key 契约断言；③ 诊断图字体从写死 `["Microsoft YaHei","SimHei"]`（Linux 落空→中文方框）改为跨平台回退 `Noto Sans CJK SC / WenQuanYi Micro Hei / DejaVu Sans`；④ 删净 15738 个 Windows `*:Zone.Identifier` 附属文件；⑤ 环境重建：删掉 Windows 版 `.venv`（`Lib/Scripts` 布局），改用 uv 拉独立 CPython 3.13.18 + `uv pip install -e '.[aholo]'`；⑥ 依赖坑：`pyproject` 的 `mcp>=1,<3` 会装到 mcp 2.x，而代码用的是 v1 `FastMCP` API（2.x 已改名 `MCPServer`，直接 `ModuleNotFoundError`）→ venv 内降到 `mcp==1.30.0`，**已把 pyproject 收紧为 `mcp>=1,<2`**（否则任何新环境都会装到不兼容的 2.x）。已知边界：体素壁厚分析内存吃得凶，80mm 大面片件峰值 ~7GB（本机 7.7GB 被 OOM kill，selftest 第 8 项同因）——低配机器跑不动，属硬件上限。
+- **v0.5 云端化（面向魔搭社区托管）**：目标=用户只填「自己的 AHOLO API Key + 需求」即可用。改动：① **Key 参数化**——`start_printguard_job` 新增 `api_key`，`lux3d_client.load_key(explicit)` 优先级=入参>环境变量>secrets 文件，Asset 上传链路同步透传（公网部署平台不托管任何用户密钥，key 不落盘不进日志）；② **双传输**——stdio（本地桌面宿主）+ streamable-http（`PRINTGUARD_TRANSPORT=streamable-http`，MCP 路径 `/mcp`），FastMCP 1.30 原生支持；③ **交付件远程可达**——stdio 返回绝对路径，http 返回 HMAC 签名限时链接 `{base}/files/{job_id}/{name}?exp=&sig=`（`PRINTGUARD_FILE_SECRET` 多副本需一致，`PRINTGUARD_PUBLIC_BASE_URL` 指定公网域名）；④ **任务表落 SQLite**（`output/jobs/jobs.db`，WAL），容器重启后历史任务仍可查；⑤ **安全**——远端输入 URL 禁内网/回环地址（SSRF）、限体积（默认 64MB）、限扩展名，下载链接验签+验期（改签名 403、改过期 410）；⑥ **并发**——同一 AHOLO 账号（key 哈希标识，明文不入内存字典）生成任务进程内串行，规避平台并发上限；⑦ 新增 `/healthz` 探针、`Dockerfile`（python:3.13-slim）、`docs/deploy-modelscope.md` 部署指南、`test_mcp_http.py` 云端形态回归（MCP over HTTP + 签名下载 + 防篡改，实测 PASS）。待办：重活子进程隔离（防单任务 OOM 拖垮实例）、多副本共享对象存储、速率限制与配额。
 
 
 ## MCP 接入（已落地）
 
-任何 MCP 宿主（Claude Desktop / Cursor / DSH…）加一段配置即得能力：
+### 本地（stdio，桌面宿主）
+
+任何 MCP 宿主（Claude Desktop / Cursor / DSH…）加一段配置即得能力（Linux / WSL 路径）：
 
 ```json
 {
   "mcpServers": {
     "printguard": {
-      "command": "<克隆路径>\\.venv\\Scripts\\python.exe",
-      "args": ["<克隆路径>\\mcp_server.py"],
+      "command": "<克隆路径>/.venv/bin/python",
+      "args": ["<克隆路径>/mcp_server.py"],
       "cwd": "<克隆路径>"
     }
   }
 }
 ```
 
+### 云端（streamable-http，魔搭社区等托管平台）
+
+```bash
+PRINTGUARD_TRANSPORT=streamable-http PRINTGUARD_HOST=0.0.0.0 PRINTGUARD_PORT=7860 \
+  .venv/bin/python mcp_server.py
+# MCP 端点：http://<host>:7860/mcp
+```
+
+托管平台侧只需要一个 ASGI 进程（Dockerfile 已就绪，见 `docs/deploy-modelscope.md`）。
+**魔搭创空间端口约定 7860**（Dockerfile 已按此配置）。
+**用户自带 AHOLO API Key**：在 `start_printguard_job` 的 `api_key` 参数传入，服务端不落盘、不写日志。
+
 | 工具 | 入参 | 说明 |
 |---|---|---|
-| start_printguard_job | prompt（生成必填）或 file_or_url（修复），height_mm(必填), quality(fast/fine), style, image | 提交即返回 job_id，不阻塞宿主 |
-| check_printguard_job | job_id | 轮询状态；done 时返回产物绝对路径 + 内联诊断缩略图（ImageContent） |
+| start_printguard_job | prompt（生成必填）或 file_or_url（修复），height_mm(必填), quality(fast/fine), style, image, **api_key（生成必填）** | 提交即返回 job_id，不阻塞宿主 |
+| check_printguard_job | job_id | 轮询状态；done 时返回交付件（stdio=绝对路径 / http=签名下载链接）+ 内联诊断缩略图（ImageContent） |
 | analyze_printability | file_or_url, height_mm(必填) | 只检测，秒级同步返回（免 key） |
 
-v0.4 起 Agent 工具样式对齐：`instructions` 随 initialize 下发四条硬规则（先问尺寸 / 生成串行 / 3MF 为基准 / C-D 先告知）；`quality`/`style` 为 enum schema；`height_mm` 故意不做 schema 必填——缺参会显式报错把宿主顶回去问用户，避免 LLM 为过校验编数字；任务 done 时内联返回诊断缩略图（`sheet_preview.jpg`，实测 ~11KB）+ 全部产物绝对路径；stdio 仅限桌面宿主（Claude Desktop / Cursor / DSH 等本机运行时），全程零外部服务器。
+v0.4 起 Agent 工具样式对齐：`instructions` 随 initialize 下发硬规则（先问尺寸 / 生成串行 / 3MF 为基准 / C-D 先告知 / key 由用户给）；`quality`/`style` 为 enum schema；`height_mm` 故意不做 schema 必填——缺参会显式报错把宿主顶回去问用户，避免 LLM 为过校验编数字；任务 done 时内联返回诊断缩略图（`sheet_preview.jpg`，实测 ~11KB）+ 全部交付件位置。
+
+v0.5 云端化补充：任务表落 SQLite（容器重启后仍可查历史任务）；交付件通过 HMAC 签名限时链接下载（`/files/{job_id}/{name}?exp=&sig=`）；远端输入 URL 加 SSRF（禁内网地址）与体积上限防护；同一 AHOLO 账号的生成任务进程内串行，规避平台并发上限。
+
+## 云端部署（魔搭社区）
+
+完整步骤见 **[docs/deploy-modelscope.md](docs/deploy-modelscope.md)**，要点：
+
+1. **形态**：Docker 镜像（`Dockerfile`，Python 3.13-slim）+ ASGI 服务（`mcp_server.py --transport streamable-http`）；
+2. **端口**：`PRINTGUARD_PORT`（或平台注入的 `PORT`）监听 `0.0.0.0`，MCP 路径 `/mcp`；
+3. **配置**：全部走环境变量（transport/host/port/job 目录/文件签名密钥/公网 base URL），无需改代码；
+4. **用户 key**：请求时经 `api_key` 参数传入，平台不托管任何用户密钥；
+5. **产物交付**：签名链接（默认 1 小时有效），用户点链接直取 3MF/GIF；
+6. **资源**：体素分析内存峰值高（80mm 大面片件 ~7GB），托管实例需 ≥8GB 内存；同账号生成任务自动串行。
 
 ## 技术风险
 
@@ -167,6 +203,9 @@ v0.4 起 Agent 工具样式对齐：`instructions` 随 initialize 下发四条�
 | ~~Lux3D 原始尺度/网格质量假设未验证~~（已解除） | - | 冒烟测试完成：尺度=归一化（`--height-mm` 必选）、mesh=自交壳汤（体素重构为必选路径），详见「API 要点」实证 |
 | ~~官方导出件尺寸 ×0.808（服务端行为，复现两次）~~（已随官方导出链移除，v0.4） | - | 本地 `printable.3mf` 恒为打印基准 |
 | 摆放优化与"平底朝下"目标冲突 | 低 | 目标函数加权合并（支撑体积 + 床面接触 + 悬垂），支持手动指定摆放 |
+| **公网实例被内存峰值打爆**（体素分析 ~7GB） | 高 | 托管实例 ≥8GB 内存；限制并发任务数；重活子进程隔离 + 超时（下一步） |
+| **公网 SSRF / 资源滥用** | 中 | 远端输入禁内网地址、限体积、限扩展名；签名下载链接防篡改；后续加速率限制与配额 |
+| **多副本下任务状态/文件不一致** | 中 | 任务表落 SQLite（共享卷即可）；文件签名密钥需各副本一致（`PRINTGUARD_FILE_SECRET`）；多副本需共享对象存储（下一步） |
 
 ## 实施顺序
 
