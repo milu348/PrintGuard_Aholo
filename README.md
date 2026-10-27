@@ -17,7 +17,12 @@ Lux3D 生成模型 + 确定性几何工具链（水密/悬垂/壁厚检测，体
 
 ## MCP 接入（Server Config）
 
-在支持 MCP 的客户端（Claude Desktop / Cursor / OpenCode 等）配置中添加以下 Server config：
+两种接入方式，工具完全一致：**方式一**把服务跑在你本机；**方式二**免安装，直接用
+魔搭社区的免费算力（2vCPU/8GB）。
+
+### 方式一：本机运行（stdio，uvx 自动安装）
+
+在支持 MCP 的客户端（Claude Desktop / Cursor / OpenCode 等）配置中添加：
 
 ```json
 {
@@ -33,19 +38,34 @@ Lux3D 生成模型 + 确定性几何工具链（水密/悬垂/壁厚检测，体
 }
 ```
 
-首次调用时 uv 自动拉取并安装本仓库，无需手动下载（需先安装
-[uv](https://docs.astral.sh/uv/)：`curl -LsSf https://astral.sh/uv/install.sh | sh`）。
+- 首次调用时 uv 自动拉取并安装本仓库，无需手动下载（需先安装
+  [uv](https://docs.astral.sh/uv/)：`curl -LsSf https://astral.sh/uv/install.sh | sh`）
+- 环境变量 `AHOLO_API_KEY` 可留空：检测/修复已有模型完全不需要 key；仅生成新模型需要
+  （免费申请：labs.aholo3d.cn），也可在每次工具调用的 `api_key` 参数中提供
+- 产物以本地绝对路径交付
 
-环境变量说明：
+### 方式二：云端托管（Streamable HTTP，免安装）
 
-- `AHOLO_API_KEY`：可留空。检测/修复已有模型完全不需要 key；仅生成新模型需要
-  （免费申请：labs.aholo3d.cn），也可在每次工具调用的 `api_key` 参数中提供。
+服务运行在魔搭社区创空间上，客户端只需配置远程地址：
+
+```json
+{
+  "mcpServers": {
+    "printguard": {
+      "url": "https://studio-miluzzz-printguard.api-inference.modelscope.net/mcp",
+      "transportType": "streamable-http",
+      "headers": {
+        "Authorization": "Bearer <你的 ModelScope 访问令牌>"
+      }
+    }
+  }
+}
+```
+
+- 需要一个 ModelScope 访问令牌（免费）：modelscope.cn → 访问令牌 页面获取
+- 产物为签名限时下载链接；生成新模型同样在工具参数 `api_key` 中自带 AHOLO key
 
 接入后对 Agent 说：**"帮我做一个能打印的手机支架，高 10 厘米"**。
-
-> 部署形态：stdio 供本机桌面宿主使用（产物以本地绝对路径交付）；云端托管（魔搭社区等）
-> 走 streamable-http，用户在工具参数 `api_key` 填自己的 key，产物用签名下载链接交付，
-> 全程无需外部服务器。详见 [docs/deploy-modelscope.md](docs/deploy-modelscope.md)。
 
 ## 两种质量档
 
