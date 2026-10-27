@@ -15,31 +15,36 @@ Lux3D 生成模型 + 确定性几何工具链（水密/悬垂/壁厚检测，体
 
 ![旋转预览](docs/img/turntable.gif)
 
-## 三步接入任意 Agent（MCP）
+## MCP 接入（Server Config）
 
-1. 安装 [uv](https://docs.astral.sh/uv/)（一次性，Linux/WSL）：
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-2. 在你的 Agent（Claude Desktop / Cursor / DSH…）配置里粘贴：
-   ```json
-   {
-     "mcpServers": {
-       "printguard": {
-         "command": "uvx",
-         "args": ["--from", "git+https://github.com/milu348/PrintGuard_Aholo", "printguard-mcp"],
-         "env": { "AHOLO_API_KEY": "<你的 key；只做检测/修复可留空>" }
-       }
-     }
-   }
-   ```
-   首次调用时 uv 自动拉取并安装，无需手动下载。
-3. 对 Agent 说：**"帮我做一个能打印的手机支架，高 10 厘米"**。
+在支持 MCP 的客户端（Claude Desktop / Cursor / OpenCode 等）配置中添加以下 Server config：
 
-> Key 免费申请：labs.aholo3d.cn。检测/修复已有模型完全不需要 key；只有生成新模型需要。
->
-> 说明：stdio 形态供本机桌面宿主使用（产物以本地绝对路径交付）；云端托管（魔搭社区等）走
-> streamable-http，用户在工具参数 `api_key` 填自己的 key，产物用签名下载链接交付，
+```json
+{
+  "mcpServers": {
+    "printguard": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/milu348/PrintGuard_Aholo", "printguard-mcp"],
+      "env": {
+        "AHOLO_API_KEY": ""
+      }
+    }
+  }
+}
+```
+
+首次调用时 uv 自动拉取并安装本仓库，无需手动下载（需先安装
+[uv](https://docs.astral.sh/uv/)：`curl -LsSf https://astral.sh/uv/install.sh | sh`）。
+
+环境变量说明：
+
+- `AHOLO_API_KEY`：可留空。检测/修复已有模型完全不需要 key；仅生成新模型需要
+  （免费申请：labs.aholo3d.cn），也可在每次工具调用的 `api_key` 参数中提供。
+
+接入后对 Agent 说：**"帮我做一个能打印的手机支架，高 10 厘米"**。
+
+> 部署形态：stdio 供本机桌面宿主使用（产物以本地绝对路径交付）；云端托管（魔搭社区等）
+> 走 streamable-http，用户在工具参数 `api_key` 填自己的 key，产物用签名下载链接交付，
 > 全程无需外部服务器。详见 [docs/deploy-modelscope.md](docs/deploy-modelscope.md)。
 
 ## 两种质量档
