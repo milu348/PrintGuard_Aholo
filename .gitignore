@@ -8,3 +8,6 @@ output/
 .mplcache/
 .pip-tmp/
 .acl-recovery/
+build/
+dist/
+*.egg-info/

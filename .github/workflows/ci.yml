@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 安装
+        run: pip install -e .
+
+      - name: 内核自测（8 用例：检测 / 修复 / 交付全链路）
+        run: python printguard.py selftest
+
+      - name: 冒烟：MCP 模块可导入且入口可用
+        run: python -c "import mcp_server; print('mcp_server OK')"
