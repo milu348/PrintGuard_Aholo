@@ -17,21 +17,19 @@ Lux3D 生成模型 + 确定性几何工具链（水密/悬垂/壁厚检测，体
 
 ## MCP 接入（Server Config）
 
-两种接入方式，工具完全一致：**方式一**把服务跑在你本机；**方式二**免安装，直接用
-魔搭社区的免费算力（2vCPU/8GB）。
+两种接入方式，工具完全一致：**方式一**标准接入（本机运行，uvx 从 PyPI 自动安装）；
+**方式二**免安装，直连魔搭创空间上已部署的实例。
 
-### 方式一：本机运行（stdio，uvx 自动安装）
+### 方式一：标准接入（stdio，uvx 从 PyPI 自动安装）
 
-在支持 MCP 的客户端（Claude Desktop / Cursor / OpenCode 等）配置中添加以下 JSON
-（需先安装 [uv](https://docs.astral.sh/uv/)：`curl -LsSf https://astral.sh/uv/install.sh | sh`，
-首次调用时 uv 自动拉取并安装本仓库）：
+在支持 MCP 的客户端（Claude Desktop / Cursor / OpenCode 等）配置中添加：
 
-```text
+```json
 {
   "mcpServers": {
     "printguard": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/milu348/PrintGuard_Aholo", "printguard-mcp"],
+      "args": ["printguard-aholo@latest"],
       "env": {
         "AHOLO_API_KEY": ""
       }
@@ -40,15 +38,18 @@ Lux3D 生成模型 + 确定性几何工具链（水密/悬垂/壁厚检测，体
 }
 ```
 
+- 首次调用时 uv 自动从 PyPI 安装（需先安装
+  [uv](https://docs.astral.sh/uv/)：`curl -LsSf https://astral.sh/uv/install.sh | sh`）
 - 环境变量 `AHOLO_API_KEY` 可留空：检测/修复已有模型完全不需要 key；仅生成新模型需要
   （免费申请：labs.aholo3d.cn），也可在每次工具调用的 `api_key` 参数中提供
 - 产物以本地绝对路径交付
 
-### 方式二：云端托管（Streamable HTTP，免安装）
+### 方式二：云端直连（Streamable HTTP，免安装）
 
-服务运行在魔搭社区创空间上，客户端只需配置远程地址：
+服务运行在魔搭社区创空间上，客户端只需配置远程地址（以下内容粘贴到客户端配置，
+注意把令牌占位符换成你的真实值）：
 
-```json
+```text
 {
   "mcpServers": {
     "printguard": {
