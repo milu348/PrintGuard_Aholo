@@ -26,9 +26,9 @@ from mcp.client.streamable_http import streamablehttp_client
 
 MCP_URL = os.environ.get("PRINTGUARD_MCP_URL",
                          "https://mcp.api-inference.modelscope.net/0907605ef46a4d/mcp")
-LLM_BASE = os.environ.get("DEMO_LLM_BASE_URL", "https://api-inference.modelscope.cn/v1")
-LLM_MODEL = os.environ.get("DEMO_LLM_MODEL", "Qwen/Qwen3.5-27B")
-LLM_TOKEN = os.environ.get("MODELSCOPE_API_TOKEN", "")
+LLM_BASE = os.environ.get("DEMO_LLM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+LLM_MODEL = os.environ.get("DEMO_LLM_MODEL", "z-ai/glm-5.3-flash")
+LLM_TOKEN = os.environ.get("LLM_API_TOKEN", "")
 MAX_TURNS = 8
 JOB_POLL_INTERVAL = 5.0
 JOB_POLL_CAP = 240          # 240 × 5s = 20 分钟上限
@@ -166,7 +166,7 @@ async def post_chat(request: Request):
     if not msg or len(msg) > 2000:
         return JSONResponse({"error": "消息为空或超长"}, status_code=400)
     if not LLM_TOKEN:
-        return JSONResponse({"error": "后端未配置 MODELSCOPE_API_TOKEN"}, status_code=500)
+        return JSONResponse({"error": "后端未配置 LLM_API_TOKEN"}, status_code=500)
     if sum(1 for s in SESSIONS.values() if s["status"] == "running") >= 3:
         return JSONResponse({"error": "演示并发已达上限，请稍后再试"}, status_code=429)
     sid = uuid.uuid4().hex[:12]
