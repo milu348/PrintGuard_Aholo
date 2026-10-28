@@ -40,6 +40,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
 import printguard as pg
+import lux3d_client
 from pipeline import run_pipeline, run_repair
 
 Quality = Literal["fast", "fine"]
@@ -64,6 +65,10 @@ ALLOW_PRIVATE_URL = os.environ.get("PRINTGUARD_ALLOW_PRIVATE_URLS", "0") == "1"
 # 随服务器下发的使用须知（MCP initialize 时宿主即可读到，不依赖 skill 文档）
 _INSTRUCTIONS = """\
 PrintGuard_Aholo：把 Lux3D 生成的 3D 模型修成可 FDM 打印的 3MF 并交付诊断报告。
+推荐工作流（概念先行）：用户描述想法 → lux3d_concept_image 出概念图（内联展示给用户）
+→ 用户满意前反复迭代（新想法写进 prompt 重新生成；可先 lux3d_four_view 出四视图锁定细节）
+→ 用户确认后 printguard_start_job(concept_image_url=... 或 four_view_urls=[...]) 图生 3D
+→ 自动体检/修复/摆向 → 交付 3MF + 旋转预览。直接文生 3D（不带概念图）依旧可用。
 使用规则：
 1. height_mm（目标尺寸 mm）必须先向终端用户确认后传入，绝不猜测；
 2. 生成类任务同一 AHOLO 账号全平台并发为 1：必须等 printguard_check_job 返回 done/error 再提交下一个；
@@ -417,7 +422,8 @@ async def download_file(request: Request):
 
 def _run_job(job_id: str, kind: str, prompt: str | None, file_or_url: str | None,
              height_mm: float, quality: str, style: str,
-             image: str | None = None, api_key: str | None = None) -> None:
+             image: str | None = None, api_key: str | None = None,
+             img_urls: list[str] | None = None) -> None:
     try:
         _STORE.update(job_id, status="running")
         if kind == "generate":
@@ -425,7 +431,8 @@ def _run_job(job_id: str, kind: str, prompt: str | None, file_or_url: str | None
             with _key_lock(_key_id(key)):   # 同一账号串行，避免撞平台并发上限
                 summary = run_pipeline(prompt=prompt, height_mm=height_mm,
                                        quality=quality, style=style, image=image,
-                                       name=job_id, out_dir=str(JOB_DIR), api_key=key)
+                                       name=job_id, out_dir=str(JOB_DIR), api_key=key,
+                                       img_urls=img_urls)
             if summary.get("failed"):
                 raise RuntimeError(f"生成失败 task={summary.get('taskid')} "
                                    f"status={summary.get('status')} {summary.get('error', '')}")
@@ -445,11 +452,60 @@ def _run_job(job_id: str, kind: str, prompt: str | None, file_or_url: str | None
 # ---------- MCP 工具 ----------
 
 @mcp.tool()
+def lux3d_concept_image(prompt: str, reference_image: str | None = None,
+                        api_key: str | None = None):
+    """生成 3D 打印概念图（多模态生图）：按用户描述产出一张概念设计图，供用户确认后再生成 3D 模型。
+
+    工作流：用户描述 → 本工具出概念图（内联展示）→ 用户确认或提出修改（修改时把新想法写进
+    prompt、可带上一张概念图作参考再生成）→ 满意后调 printguard_start_job(concept_image_url=...)。
+
+    Args:
+        prompt: 概念描述（如"机甲风格的手机支架，哑光金属质感"）
+        reference_image: 可选参考图 URL（风格/造型参考）
+        api_key: 用户的 AHOLO API Key（公网部署必填，本地可留空走环境变量）
+    """
+    key = (api_key or os.environ.get("AHOLO_API_KEY", "")).strip()
+    if not key:
+        raise ValueError("需要 AHOLO API Key：请让用户填写后放入 api_key 参数")
+    res = lux3d_client.concept_image(key, prompt=prompt,
+                                     image=reference_image or None,
+                                     dest_dir=f"{JOB_DIR}/concept/{uuid.uuid4().hex[:8]}")
+    note = json.dumps({"concept_image_url": res["url"],
+                       "next": "向用户展示概念图；满意 → printguard_start_job(concept_image_url=url)；"
+                               "不满意 → 把修改意见写进 prompt 重新生成本图"}, ensure_ascii=False)
+    return [note, Image(path=res["path"])] if res.get("path") else note
+
+
+@mcp.tool()
+def lux3d_four_view(prompt: str | None = None, reference_image: str | None = None,
+                    api_key: str | None = None):
+    """生成四张标准视图（前三视图 45° / 对侧 45° / 侧视 / 背视）。用于在生成 3D 前锁定外观细节，
+    四张图可作为多视角输入提升图生 3D 的几何一致性（printguard_start_job 的 four_view_urls）。
+
+    Args:
+        prompt: 视图描述（可纯文案生成）
+        reference_image: 可选参考图 URL（已有概念图时传入其 URL）
+        api_key: 用户的 AHOLO API Key（公网部署必填，本地可留空走环境变量）
+    """
+    key = (api_key or os.environ.get("AHOLO_API_KEY", "")).strip()
+    if not key:
+        raise ValueError("需要 AHOLO API Key：请让用户填写后放入 api_key 参数")
+    urls = lux3d_client.four_view(key, prompt=prompt or None,
+                                  image=reference_image or None)
+    order = ["FRONT_THREE_QUARTER", "OPPOSITE_THREE_QUARTER", "SIDE", "BACK"]
+    note = json.dumps({"four_view_urls": urls, "order": order,
+                       "next": "把 4 个 URL 按顺序传给 printguard_start_job(four_view_urls=[...])"}, ensure_ascii=False)
+    return [note, Image(path=lux3d_client.download(urls[0], dest=f"{JOB_DIR}/fourview/{uuid.uuid4().hex[:8]}.png"))]
+
+
+@mcp.tool()
 def printguard_start_job(prompt: str | None = None, height_mm: float | None = None,
                          quality: Quality = "fast",
                          style: Style = "photorealistic",
                          file_or_url: str | None = None,
                          image: str | None = None,
+                         concept_image_url: str | None = None,
+                         four_view_urls: list[str] | None = None,
                          api_key: str | None = None):
     """提交一个 PrintGuard_Aholo 任务（立即返回 job_id，不阻塞）。用 printguard_check_job 轮询结果。
 
@@ -463,14 +519,27 @@ def printguard_start_job(prompt: str | None = None, height_mm: float | None = No
         style: 生成风格
         file_or_url: 已有 mesh 文件（公网部署传公网 URL；本地可用本机路径）；提供时任务为"修复"而非"生成"
         image: 可选参考图（本机路径或公网 URL），与 prompt 同时使用——图文结合生成
+        concept_image_url: 概念图 URL（lux3d_concept_image 的产物，经用户确认后传入）——走图生 3D
+        four_view_urls: 四视图 URL 列表（lux3d_four_view 的产物）——多视角图生 3D，几何一致性更好
         api_key: 用户的 AHOLO API Key（公网部署必填，本地可留空走环境变量）
     """
     # height_mm 故意不在 schema 层 required：required 会逼宿主 LLM 编一个数，
     # 违反"绝不猜尺寸"；显式报错把宿主顶回去问用户才是正确契约。
     if height_mm is None:
         raise ValueError("height_mm（目标尺寸 mm）必须由终端用户提供，绝不猜测——先询问用户")
-    if not file_or_url and not prompt:
-        raise ValueError("生成任务需要 prompt；修复任务需要 file_or_url")
+    img_urls = None
+    if four_view_urls:
+        img_urls = [u for u in four_view_urls if isinstance(u, str) and u.startswith("http")]
+        if not img_urls:
+            raise ValueError("four_view_urls 里没有有效的 http(s) URL")
+    elif concept_image_url:
+        if not concept_image_url.startswith("http"):
+            raise ValueError("concept_image_url 必须是公网 URL（Lux3D 概念图任务返回的链接）")
+        img_urls = [concept_image_url]
+    if img_urls and not file_or_url:
+        pass  # 图生 3D：prompt 可为空
+    elif not file_or_url and not prompt:
+        raise ValueError("生成任务需要 prompt（或概念图 concept_image_url / four_view_urls）；修复任务需要 file_or_url")
     key = (api_key or os.environ.get("AHOLO_API_KEY", "")).strip()
     kind = "repair" if file_or_url else "generate"
     if kind == "generate" and not key:
@@ -479,7 +548,7 @@ def printguard_start_job(prompt: str | None = None, height_mm: float | None = No
     _STORE.create(job_id, kind)
     threading.Thread(target=_run_job, daemon=True,
                      args=(job_id, kind, prompt, file_or_url, height_mm,
-                           quality, style, image, key or None)).start()
+                           quality, style, image, key or None, img_urls)).start()
     return json.dumps({"job_id": job_id, "status": "queued",
                        "hint": "用 printguard_check_job(job_id) 轮询；生成 fine 档约 10min"},
                       ensure_ascii=False)

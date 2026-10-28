@@ -162,18 +162,90 @@ def _wait_and_download(key: str, tid: int, dest_dir, want_ext: set) -> list:
     return paths
 
 
+def download(url: str, dest: str) -> str:
+    """下载单个 URL 到指定路径（MCP 工具内联展示用）。返回 dest。"""
+    dest = str(dest)
+    Path(dest).parent.mkdir(parents=True, exist_ok=True)
+    with requests.get(url, stream=True, timeout=180) as r:
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(1 << 16):
+                f.write(chunk)
+    return dest
+
+
+def _wait_outputs(key: str, tid: int) -> list[str]:
+    """轮询至终态，返回 outputs 里的 URL 列表（不下载）。"""
+    data = poll_task(key, tid)
+    if data["status"] != 3:
+        raise RuntimeError(f"task {tid} 未成功: status={data['status']}")
+    return [(o or {}).get("content") or "" for o in data.get("outputs", [])
+            if ((o or {}).get("content") or "").startswith("http")]
+
+
+def _upload_if_local(key: str, image: str) -> str:
+    return image if image.startswith(("http://", "https://")) else upload_mesh(image, key=key)
+
+
 def concept_image(key: str, prompt: str, image: str | None = None,
-                  dest_dir="output/concept") -> Path:
-    """multimodal-to-image：概念图（纯文案或图文）。返回图片路径。"""
+                  dest_dir="output/concept") -> dict:
+    """multimodal-to-image：概念图（纯文案或图文组合）。返回 {"url", "path"}——
+    url 供 Agent 展示/下游 img-to-3d 引用，path 为本地留档。"""
     body = {"prompt": prompt}
     if image:
-        body["img"] = image if image.startswith(("http://", "https://")) else upload_mesh(image, key=key)
+        body["img"] = _upload_if_local(key, image)
     r = requests.post(f"{BASE}/lux3d/v1/generate/multimodal-to-image/task/create",
                       headers={"Authorization": key}, json=body, timeout=30)
     d = r.json()
     if d.get("c") != "0":
         raise RuntimeError(f"concept create failed: {d}")
-    paths = _wait_and_download(key, int(d["d"]), dest_dir, {"png", "jpg", "jpeg", "webp"})
-    if not paths:
+    urls = _wait_outputs(key, int(d["d"]))
+    if not urls:
         raise RuntimeError("concept: no image url in outputs")
-    return paths[0]
+    paths = _wait_and_download(key, int(d["d"]), dest_dir, {"png", "jpg", "jpeg", "webp"})
+    return {"url": urls[0], "path": str(paths[0]) if paths else ""}
+
+
+def four_view(key: str, prompt: str | None = None,
+              image: str | None = None) -> list[str]:
+    """image-to-four-view：图片/文案 → 四张标准视图 URL，顺序固定：
+    FRONT_THREE_QUARTER / OPPOSITE_THREE_QUARTER / SIDE / BACK。"""
+    if not prompt and not image:
+        raise ValueError("prompt 与 image 至少提供一个")
+    body = {}
+    if prompt:
+        body["prompt"] = prompt
+    if image:
+        body["img"] = _upload_if_local(key, image)
+    r = requests.post(f"{BASE}/lux3d/v1/generate/image-to-four-view/task/create",
+                      headers={"Authorization": key}, json=body, timeout=30)
+    d = r.json()
+    if d.get("c") != "0":
+        raise RuntimeError(f"four-view create failed: {d}")
+    urls = _wait_outputs(key, int(d["d"]))
+    if len(urls) < 4:
+        raise RuntimeError(f"four-view: 期望 4 张视图，实得 {len(urls)}")
+    return urls[:4]
+
+
+def create_img_task(key: str, img: str | None = None,
+                    imgs: list[str] | None = None, version: str = "G1",
+                    face_count: int = 100000,
+                    output_format: list | None = None) -> int:
+    """图生 3D：img（单图）与 imgs（1-32 张多视角，首张为主参考）二选一；
+    使用 imgs 时必须显式 version。返回 taskid（沿用统一轮询/下载管线）。"""
+    if bool(img) == bool(imgs):
+        raise ValueError("img 与 imgs 必须且只能提供一个")
+    body = {"version": version, "faceCount": face_count,
+            "outputFormat": output_format or ["glb"], "enablePbr": False,
+            "aiPredictSize": False}
+    if img:
+        body["img"] = _upload_if_local(key, img)
+    else:
+        body["imgs"] = [_upload_if_local(key, u) for u in imgs]
+    r = requests.post(f"{BASE}/lux3d/v1/generate/img-to-3d/task/create",
+                      headers={"Authorization": key}, json=body, timeout=30)
+    d = r.json()
+    if d.get("c") != "0":
+        raise RuntimeError(f"img-to-3d create failed: {d}")
+    return int(d["d"])

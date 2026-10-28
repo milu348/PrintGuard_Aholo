@@ -64,9 +64,30 @@ AI 文生 3D（Lux3D 等）产出的模型看似精美，直接送 FDM 打印机
 
 | 工具 | 功能 | 关键参数 |
 |---|---|---|
-| `printguard_start_job` | 提交任务（立即返回 job_id）：**文生 3D**（Lux3D → 体检 → 修复 → 交付）或 **修复已有模型** | `prompt` / `file_or_url` / `height_mm` / `quality` / `style` / `image` / `api_key` |
+| `lux3d_concept_image` | **概念图**：按描述生成概念设计图，与用户迭代确认后再进入 3D 生成 | `prompt` / `reference_image` / `api_key` |
+| `lux3d_four_view` | **四视图**：前三视图 45°/对侧/侧/背——生成 3D 前锁定外观细节 | `prompt` / `reference_image` / `api_key` |
+| `printguard_start_job` | 提交任务（立即返回 job_id）：**概念图/多视角图生 3D 或文生 3D** → 体检 → 修复 → 交付；也支持修复已有模型 | `prompt` / `concept_image_url` / `four_view_urls` / `file_or_url` / `height_mm` / `quality` / `api_key` |
 | `printguard_check_job` | 轮询任务状态，完成后返回报告与产物 | `job_id` |
 | `printguard_analyze_printability` | 只体检不修复：水密性、悬垂、壁厚、间隙、风险评分 | `file_or_url` / `height_mm` |
+
+### 推荐工作流：概念先行
+
+```
+用户描述 ──▶ lux3d_concept_image ──▶ 用户看到概念图
+                 ▲                        │
+                 └── 不满意？新想法重新生成 ┘
+                                          │ 满意
+                                          ▼
+              （可选）lux3d_four_view 锁定四视图
+                                          │
+                                          ▼
+        printguard_start_job(concept_image_url / four_view_urls)
+                                          │
+                    ▼ 体检 ── ▼ 修复 ── ▼ 摆向 ── ▼ 交付 3MF + GIF + 报告
+```
+
+概念图先行的价值：**图片迭代的成本远低于 3D 生成**，用户在昂贵的生成步骤前锁定设计。
+实测：概念图 ~47s，G1-Turbo 图生 3D ~15s。
 
 两档质量自动适配：`fast`（G1-Turbo + 100k 面，结构件，端到端 ~2 分钟）/
 `fine`（G1 + 300k 面 + 0.3mm 细体素，手办细节件，~10 分钟）。

@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 import printguard as pg
-from lux3d_client import create_task, download_glbs, load_key, poll_task
+from lux3d_client import create_img_task, create_task, download_glbs, load_key, poll_task
 
 QUALITY_PRESETS = {
     # fast：结构件/快速迭代（全程 ~2min）；fine：手办/细节件（生成 ~5min+本地 ~6min，文件大但保真）
@@ -94,9 +94,11 @@ def run_pipeline(prompt: str, height_mm: float, quality: str = "fast",
                  version: str | None = None, face_count: int | None = None,
                  from_file: str | None = None, name: str | None = None,
                  out_dir: str = "output/runs", no_orient: bool = False,
-                 api_key: str | None = None) -> dict:
+                 api_key: str | None = None,
+                 img_urls: list[str] | None = None) -> dict:
     """一条龙核心（CLI 与 MCP 复用）。返回 summary dict（失败时含 failed 标记）。
     image：可选参考图（本地路径或 URL），与 prompt 同时使用（文生 3D 的 img 字段）。
+    img_urls：概念图/多视角 URL 列表——提供时走图生 3D（prompt 可为空），概念先行工作流的产物。
     api_key：调用方自带 API Key（公网部署必填）；缺省回退环境变量/本地 secrets 文件。"""
     q = QUALITY_PRESETS[quality]
     version = version or q["version"]
@@ -114,8 +116,14 @@ def run_pipeline(prompt: str, height_mm: float, quality: str = "fast",
         print(f"[skip-gen] from-file: {raw_glb}", flush=True)
     else:
         key = load_key(api_key)
-        tid = create_task(key, prompt, version=version,
-                          face_count=face_count, style=style, image=image)
+        if img_urls:
+            # 概念图/多视角驱动的图生 3D（单图用 img，多视角用 imgs；此时不传 style）
+            tid = create_img_task(key, img=img_urls[0] if len(img_urls) == 1 else None,
+                                  imgs=img_urls if len(img_urls) > 1 else None,
+                                  version=version, face_count=face_count)
+        else:
+            tid = create_task(key, prompt, version=version,
+                              face_count=face_count, style=style, image=image)
         print(f"[gen] task={tid} version={version} mode={quality} ...", flush=True)
         data = poll_task(key, tid)
         if data["status"] != 3:
