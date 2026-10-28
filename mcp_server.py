@@ -66,7 +66,7 @@ _INSTRUCTIONS = """\
 PrintGuard_Aholo：把 Lux3D 生成的 3D 模型修成可 FDM 打印的 3MF 并交付诊断报告。
 使用规则：
 1. height_mm（目标尺寸 mm）必须先向终端用户确认后传入，绝不猜测；
-2. 生成类任务同一 AHOLO 账号全平台并发为 1：必须等 check_printguard_job 返回 done/error 再提交下一个；
+2. 生成类任务同一 AHOLO 账号全平台并发为 1：必须等 printguard_check_job 返回 done/error 再提交下一个；
 3. AHOLO API Key 由用户在 api_key 参数提供（不要替用户编造或猜测 key）；本地部署可走环境变量；
 4. 交付 = printable.3mf（打印基准）+ turntable.gif（渲染预览）；诊断图（缺陷着色）仅供你查看讲解修复，不作为文件交付；
 5. risk 为 C/D 时先向用户逐项告知问题再交付；薄壁修不动时如实说"建议重新设计"，不假装能修。"""
@@ -270,7 +270,7 @@ _LANDING_HTML = """<!doctype html>
 <ul>
  <li>传输方式：<code>streamable-http</code></li>
  <li>服务地址：<code id="mcpurl">/mcp</code></li>
- <li>工具：<code>start_printguard_job</code>（文生 3D + 体检）、<code>get_printguard_status</code>（查进度 / 取签名下载链接）、<code>analyze_printability</code>（体检已有 mesh）</li>
+ <li>工具：<code>printguard_start_job</code>（文生 3D + 体检）、<code>get_printguard_status</code>（查进度 / 取签名下载链接）、<code>printguard_analyze_printability</code>（体检已有 mesh）</li>
  <li>生成功能需自带 AHOLO API Key（调用时传入 <code>api_key</code> 参数，平台不托管）</li>
 </ul>
 <p style="color:#6b7280">健康检查 <code>/healthz</code> · MCP 端点 <code>/mcp</code> · 交付文件为 HMAC 签名限时链接</p>
@@ -445,13 +445,13 @@ def _run_job(job_id: str, kind: str, prompt: str | None, file_or_url: str | None
 # ---------- MCP 工具 ----------
 
 @mcp.tool()
-def start_printguard_job(prompt: str | None = None, height_mm: float | None = None,
+def printguard_start_job(prompt: str | None = None, height_mm: float | None = None,
                          quality: Quality = "fast",
                          style: Style = "photorealistic",
                          file_or_url: str | None = None,
                          image: str | None = None,
                          api_key: str | None = None):
-    """提交一个 PrintGuard_Aholo 任务（立即返回 job_id，不阻塞）。用 check_printguard_job 轮询结果。
+    """提交一个 PrintGuard_Aholo 任务（立即返回 job_id，不阻塞）。用 printguard_check_job 轮询结果。
 
     两种任务：只给 prompt = 生成新模型（Lux3D → 检测 → 修复 → 交付）；
     给 file_or_url（mesh 文件）+ prompt 可留空说明 = 修复已有模型。
@@ -481,12 +481,12 @@ def start_printguard_job(prompt: str | None = None, height_mm: float | None = No
                      args=(job_id, kind, prompt, file_or_url, height_mm,
                            quality, style, image, key or None)).start()
     return json.dumps({"job_id": job_id, "status": "queued",
-                       "hint": "用 check_printguard_job(job_id) 轮询；生成 fine 档约 10min"},
+                       "hint": "用 printguard_check_job(job_id) 轮询；生成 fine 档约 10min"},
                       ensure_ascii=False)
 
 
 @mcp.tool()
-def check_printguard_job(job_id: str):
+def printguard_check_job(job_id: str):
     """查询 PrintGuard_Aholo 任务状态：queued/running/done/error；done 时返回交付件
     （printable.3mf + turntable.gif）——本地部署给绝对路径，云端部署给签名下载链接，
     并内联附上诊断缩略图（ImageContent——缺陷着色图，供你查看讲解修复，非交付文件）。"""
@@ -506,7 +506,7 @@ def check_printguard_job(job_id: str):
 
 
 @mcp.tool()
-def analyze_printability(file_or_url: str, height_mm: float):
+def printguard_analyze_printability(file_or_url: str, height_mm: float):
     """秒级检测 mesh 可打印性（同步返回）：水密性、悬垂(>45°)、最小壁厚(>=0.8mm)、风险评分 S-D。
 
     Args:

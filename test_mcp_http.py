@@ -2,7 +2,7 @@
 
 覆盖：
   1. /healthz 存活探针；
-  2. streamable-http 端点 list_tools / call_tool（analyze_printability）；
+  2. streamable-http 端点 list_tools / call_tool（printguard_analyze_printability）；
   3. 修复任务端到端：提交 -> 轮询 -> 结果含签名下载链接 -> 链接可下载；
   4. 链接防篡改：签名/过期校验（403/410）。
 
@@ -90,14 +90,14 @@ async def main() -> None:
                 tools = sorted(t.name for t in (await s.list_tools()).tools)
                 print("tools:", tools)
 
-                res = await s.call_tool("analyze_printability",
+                res = await s.call_tool("printguard_analyze_printability",
                                         {"file_or_url": "output/healthy_cube.stl",
                                          "height_mm": 40})
                 rep = json.loads(res.content[0].text)
                 print("analyze risk:", rep["risk"])
 
                 # 修复任务（不需要 API Key）
-                sub = await s.call_tool("start_printguard_job",
+                sub = await s.call_tool("printguard_start_job",
                                         {"file_or_url": "output/healthy_cube.stl",
                                          "height_mm": 40})
                 job_id = json.loads(sub.content[0].text)["job_id"]
@@ -105,7 +105,7 @@ async def main() -> None:
                 payload = None
                 for _ in range(120):
                     await asyncio.sleep(2)
-                    st = await s.call_tool("check_printguard_job", {"job_id": job_id})
+                    st = await s.call_tool("printguard_check_job", {"job_id": job_id})
                     text = st.content[0].text
                     payload = json.loads(text)
                     if payload.get("status") in ("done", "error"):
@@ -127,8 +127,8 @@ async def main() -> None:
                 bad = requests.get(url.replace("sig=", "sig=x"), timeout=10)
                 tampered = requests.get(url[:-3] + "999", timeout=10)
 
-                ok = (tools == ["analyze_printability", "check_printguard_job",
-                                "start_printguard_job"]
+                ok = (tools == ["printguard_analyze_printability", "printguard_check_job",
+                                "printguard_start_job"]
                       and dl.status_code == 200 and same
                       and bad.status_code == 403
                       and tampered.status_code in (403, 410)

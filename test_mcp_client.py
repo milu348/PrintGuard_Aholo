@@ -29,25 +29,25 @@ async def main() -> None:
             print("instructions:", (init.instructions or "")[:60].replace("\n", " "), "...")
             tools = {t.name: t for t in (await s.list_tools()).tools}
             print("tools:", sorted(tools))
-            schema = tools["start_printguard_job"].inputSchema
+            schema = tools["printguard_start_job"].inputSchema
             q_enum = schema["properties"]["quality"].get("enum")
             s_enum = schema["properties"]["style"].get("enum")
             print("quality enum:", q_enum)
             print("style enum size:", len(s_enum or []))
             print("api_key in schema:", "api_key" in schema["properties"])
 
-            err = await s.call_tool("check_printguard_job", {"job_id": "nonexistent"})
+            err = await s.call_tool("printguard_check_job", {"job_id": "nonexistent"})
             print("unknown job_id isError:", err.isError, "| msg:", err.content[0].text[:60])
 
             res = await s.call_tool(
-                "analyze_printability",
+                "printguard_analyze_printability",
                 {"file_or_url": "output/healthy_cube.stl", "height_mm": 40})
             text = res.content[0].text
             print("analyze result (前 200 字):")
             print(text[:200])
 
             # 生成任务缺 api_key 必须显式报错（公网部署契约），不能静默失败
-            no_key = await s.call_tool("start_printguard_job",
+            no_key = await s.call_tool("printguard_start_job",
                                        {"prompt": "测试", "height_mm": 50})
             print("generate without api_key isError:", no_key.isError,
                   "| msg:", no_key.content[0].text[:80])

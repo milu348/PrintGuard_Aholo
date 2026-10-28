@@ -3,7 +3,7 @@
 
 双入口：
   CLI：  python pipeline.py "prompt" --height-mm 130 --quality fine
-  MCP：  mcp_server.py 的 start_printguard_job（复用本模块函数）
+  MCP：  mcp_server.py 的 printguard_start_job（复用本模块函数）
 
 尺寸必填（尺寸策略：本地确定性缩放；未给尺寸应先询问——CLI 层用 required 强制）。
 生成串行（Lux3D 并发=1）；结果 URL 2 小时过期，下载后立刻处理。

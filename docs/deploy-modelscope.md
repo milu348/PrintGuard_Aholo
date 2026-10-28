@@ -86,11 +86,11 @@ curl -s http://127.0.0.1:7860/healthz
 ## 4. 用户侧交互契约
 
 1. 宿主问用户要 **目标尺寸 mm**（工具层不猜尺寸，缺参直接报错）。
-2. 宿主问用户要 **AHOLO API Key**（`labs.aholo3d.cn` 免费申请），填进 `start_printguard_job` 的 `api_key`。
-3. 提交任务拿 `job_id`，轮询 `check_printguard_job`；`done` 时返回交付件签名链接 + 内联诊断缩略图。
+2. 宿主问用户要 **AHOLO API Key**（`labs.aholo3d.cn` 免费申请），填进 `printguard_start_job` 的 `api_key`。
+3. 提交任务拿 `job_id`，轮询 `printguard_check_job`；`done` 时返回交付件签名链接 + 内联诊断缩略图。
 4. 风险 C/D 时，宿主需先逐项告知用户问题再交付；薄壁修不动如实说"建议重新设计"。
 
-只有"生成"需要 key；`analyze_printability` 与"修复已有模型"不需要 key。
+只有"生成"需要 key；`printguard_analyze_printability` 与"修复已有模型"不需要 key。
 
 ---
 
@@ -116,3 +116,12 @@ PRINTGUARD_TRANSPORT=streamable-http PRINTGUARD_PORT=7860 \
 ```
 
 预期：`HTTP PASS (download=200 same=True bad_sig=403 tampered=403)`。
+
+
+## 运维注意（MCP 托管部署）
+
+- 平台免费资源池（platform-pool）托管的实例**有有效期**（部署时生成，实测约 48 小时），
+  到期后托管链接失效。**每次部署 / 续期前，须先询问产品所有者是否更新链接，不得擅自操作。**
+- 免费额度限制：每用户 20 个免费部署服务、每服务 1 个实例；5 秒窗口内总请求 ≤500 次，
+  单用户 50000 次（含 initialize / list_tools / tool call 全部请求类型）。
+- 续期入口：MCP 广场 → 服务条目 → 托管部署（重新生成 operational_url）。

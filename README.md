@@ -64,9 +64,9 @@ AI 文生 3D（Lux3D 等）产出的模型看似精美，直接送 FDM 打印机
 
 | 工具 | 功能 | 关键参数 |
 |---|---|---|
-| `start_printguard_job` | 提交任务（立即返回 job_id）：**文生 3D**（Lux3D → 体检 → 修复 → 交付）或 **修复已有模型** | `prompt` / `file_or_url` / `height_mm` / `quality` / `style` / `image` / `api_key` |
-| `check_printguard_job` | 轮询任务状态，完成后返回报告与产物 | `job_id` |
-| `analyze_printability` | 只体检不修复：水密性、悬垂、壁厚、间隙、风险评分 | `file_or_url` / `height_mm` |
+| `printguard_start_job` | 提交任务（立即返回 job_id）：**文生 3D**（Lux3D → 体检 → 修复 → 交付）或 **修复已有模型** | `prompt` / `file_or_url` / `height_mm` / `quality` / `style` / `image` / `api_key` |
+| `printguard_check_job` | 轮询任务状态，完成后返回报告与产物 | `job_id` |
+| `printguard_analyze_printability` | 只体检不修复：水密性、悬垂、壁厚、间隙、风险评分 | `file_or_url` / `height_mm` |
 
 两档质量自动适配：`fast`（G1-Turbo + 100k 面，结构件，端到端 ~2 分钟）/
 `fine`（G1 + 300k 面 + 0.3mm 细体素，手办细节件，~10 分钟）。

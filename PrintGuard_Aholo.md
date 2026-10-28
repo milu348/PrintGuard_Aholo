@@ -49,10 +49,10 @@
 
 ```
 用户（自然语言） → Agent 宿主（MCP 工具 / skill 指令编排）
-  ├─ start_printguard_job(prompt, height_mm, quality, style, image?, file_or_url?, api_key?)
+  ├─ printguard_start_job(prompt, height_mm, quality, style, image?, file_or_url?, api_key?)
   │      → Lux3D 生成（串行轮询）→ 本地检测/修复 → 交付件
-  ├─ check_printguard_job(job_id)                 → 状态 + 交付件（本地路径 / 签名下载链接）+ 内联诊断缩略图
-  ├─ analyze_printability(file_or_url, height_mm) → 秒级诊断 JSON（免 key）
+  ├─ printguard_check_job(job_id)                 → 状态 + 交付件（本地路径 / 签名下载链接）+ 内联诊断缩略图
+  ├─ printguard_analyze_printability(file_or_url, height_mm) → 秒级诊断 JSON（免 key）
   └─ 交付件：printable.3mf + turntable.gif（渲染预览）(+ diagnostic_sheet.png 内部诊断件 / report.json)
 
 云端（streamable-http）额外暴露：
@@ -123,14 +123,14 @@ P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P
 - **v0.3 "太粗糙"诊断（证据齐）**：① G1+300k vs Turbo+100k A/B——面数 3 倍、同尺度表面积 +15%（真实细节）、生成 292s vs 46s；② 重建 pitch 0.3 vs 0.81 表面积完全一致（42% 差额是**正确移除**壳汤内部面，非细节毁灭）——但**粗 pitch 会静默抹掉 0.3mm 级小特征**（0.81 下尾巴尖直接消失、连警告都不发）；③ 交付体积解 = 3MF 压缩（143MB STL→54MB）。结论落地为 `--quality fast|fine` 双模式（pipeline 已实现；G1 下载含 ZIP+GLB 双文件的坑已修——按真实扩展名命名）；
 - **v0.3 产品形态落地：pip/uvx 可安装包**：`pyproject.toml`（元数据/依赖/入口 `printguard-mcp`）+ README 三步接入（uvx 从 GitHub 自动拉包，用户零手动下载；key 走 MCP 配置 env，检测/修复可免 key）；官方 stdio 客户端对**打包后入口**协议验证 PASS（list_tools + call_tool）；`lux3d_client.load_key` 改为 env 优先；
 - **v0.3 交付收敛 + 图文输入（已验证）**：交付物精简为 `printable.3mf` + `diagnostic_sheet.png`（左=缺陷着色 3D、右=中文指标面板与修复步骤，替代 HTML/STL 散件）+ `turntable.gif`（旋转一周的"准 3D"对话内预览）；`--image`/MCP `image` 参数支持**图+文同时输入**（本地图自动走 Asset 上传，真实生成已验证）；修复三小坑（GIF append 需 PIL Image、面板字体改雅黑避免方框、main 退出码键名）；渲染加 **Lambert 头灯着色**（面法线×相机方向调亮度）——统一灰会完全失去立体感（用户实测反馈后修复，诊断图与 GIF 均已应用）；
-- **v0.3 MCP Server 落地 PASS**：`mcp_server.py`（FastMCP，stdio），复用 `run_pipeline / deliver_outputs`（pipeline 已重构为 CLI/MCP 双入口）；官方 stdio 客户端协议验证 PASS（list_tools + call_tool 全链路，测试脚本 `test_mcp_client.py` 保留作回归）。宿主配置示例见「MCP 接入」。踩坑：mcp SDK 2.x 把 FastMCP 改名 MCPServer，已钉 `mcp<2`；沙箱禁管道，协议测试需提权一次（已知边界）。**接口演进**：同步工具（generate/repair_printable）→ **异步 job 模式**（start_printguard_job + check_printguard_job + analyze_printability），生成/修复耗时长，宿主免阻塞；产物自动上传 COS 以 URL 返回；
+- **v0.3 MCP Server 落地 PASS**：`mcp_server.py`（FastMCP，stdio），复用 `run_pipeline / deliver_outputs`（pipeline 已重构为 CLI/MCP 双入口）；官方 stdio 客户端协议验证 PASS（list_tools + call_tool 全链路，测试脚本 `test_mcp_client.py` 保留作回归）。宿主配置示例见「MCP 接入」。踩坑：mcp SDK 2.x 把 FastMCP 改名 MCPServer，已钉 `mcp<2`；沙箱禁管道，协议测试需提权一次（已知边界）。**接口演进**：同步工具（generate/repair_printable）→ **异步 job 模式**（printguard_start_job + printguard_check_job + printguard_analyze_printability），生成/修复耗时长，宿主免阻塞；产物自动上传 COS 以 URL 返回；
 - **v0.3.1 群核三函数实测 PASS**：`concept_image` ✓（31s，纯 prompt 出概念图）；`material_transfer` ✓（262s，白模猫+陶瓷概念图 → 釉面材质 GLB，渲染链验证贴图/着色正常）；`part_split` ✓ 链路通（任务+下载+GLB 有效 29.9 万面）——单连体网格返回原样 1 件（拆件器合理决策），语义化"拆成 N 件"需多部件输入，如实记录。三函数保留在 `lux3d_client` 备用，未接入交付链；
 - **v0.3.1 wall_thicken v2（闭环收敛）+ 疑点破案**：插桩复现定位根因——v1 一次性开环膨胀在细 pitch 下**残留 fail 边缘特征**（增厚后网格直接量测仍有 7 个 fail 中轴体素），且 marching-cubes 往返量化会把亚 pitch 残余再退化一档（0.49→0.27）；v2 改为**探→胀→再探闭环**（≤3 轮，目标 T≥0.8+2×pitch 安全裕量，预算超限如实报"发丝级细节建议重设计或接受"），selftest 全过（thin_plate fail→warn 0.84）。生产复现（ahri fine 档）证实：**发丝级尾尖/毛细节物理上超出体素增厚可救范围**（+1.08mm/side 预算吃满仍有残余，且继续加厚会把毛发变棒状毁设计）——诚实报告+建议重设计是正确行为，非 bug；
 - 调试教训：调试脚本被 import 时顶层实验代码会重跑（多烧 2 次渲染配额）——可复用逻辑一律提取进正式模块函数，调试脚本只做参数化调用；
 - **v0.4 结构简化 + MCP 去托管**：MCP 仅保留 stdio（删 streamable-http / `--transport` / `--host` / `--port`），产物不再传 COS 换 URL，直接返回本地路径（宿主与本机同侧，路径即所得）；官方导出链整体移除（`lux3d_client.export_official`、pipeline `--export`、MCP `export_official` 参数及尺寸比告警——×0.808 服务端偏差两次复现，本地 3MF 恒为打印基准；Asset SDK/`upload_mesh` 保留供 `--image` 参考图上传）；删除被 diagnostic_sheet 取代的旧渲染（`render_report`/`build_html_report` + CLI `render`/`report` 子命令，连带移除 plotly 依赖）与 lux3d_client 冒烟残留（`PROMPTS`/`main`/`analyze_raw`）；`download_glbs` 去掉未用的 key 参数；MCP 修复分支提取为 `pipeline.run_repair`（CLI/MCP 复用），生成失败显式置 error 不再静默交付空结果；`test_mcp_client` 回归目标改 `output/healthy_cube.stl`（原 `printable.stl` 已随工作区清理删除）。保留：异步 job 模式、概念图/拆件/材质迁移、fast/fine 双档。四模块 1466 → ~1030 行。
 - **v0.4 顺手修掉一个潜伏 bug**：`_solid_grid` 对**大面片网格**（低多边形盒子等，单三角形边长远大于 pitch）做 `voxelized()` 时，subdivide 细分轮数超 trimesh 默认 `max_iter=10` 直接抛 "max_iter exceeded"——此前测试目标全是 marching-cubes 细碎三角形故未暴露，被新 MCP 回归目标（合成盒子 STL@80mm）撞出。修复：`voxelized(pitch, max_iter=64)`；selftest 增至 7 项（新增 big_facet_reload：大面片 STL 重载→80mm→wall pass）。
 - **v0.4 开源发布（v0.4.0 → github.com/milu348/PrintGuard_Aholo）**：git init 首推（main + tag v0.4.0），远程原占位 README 经 --force-with-lease 替换；新增 MIT LICENSE（署名 PrintGuard contributors）与 docs/img 示例图（README 交付示例节，九尾狐 fast 档案例）；test_mcp_client ROOT 改 __file__ 相对（clone 即可跑）、PrintGuard.md MCP 配置示例路径通用化；情报汇总与全部运行产物不入库（.gitignore 核查 CLEAN）。打包冒烟：setuptools 由 pyproject 构建 wheel 成功（printguard-0.4.0，24KB，四模块+入口），uvx 安装链路打包层验证通过。沙箱注意：pip 的 build 子进程写临时目录会被沙箱拦（git/pwsh cmdlet 不受影响），构建验证需提权一次；venv 无 pip（--without-pip 遗留）时用全局 python -m pip。
-- **v0.4 Agent 工具样式对齐（无服务器读取方案落地）**：产物改**绝对路径**（uvx 分发时宿主 cwd 不确定的兜底）；任务 done 时 `check_printguard_job` **内联返回诊断缩略图** `sheet_preview.jpg`（PIL 降采样 JPEG，实测 11KB，全尺寸 PNG 67KB 留路径）——agent 在对话内直接"看"诊断图讲解缺陷，零外部服务器（与 playwright 截图同款协议机制）；`quality`/`style` 改 Literal 枚举（JSON Schema 自动带 enum）；`FastMCP(instructions=...)` 随 initialize 下发四条硬规则；错误统一 raise（宿主收 is_error）。**顺手修掉第二个潜伏 bug**：`prompt` 原为 schema 必填 → 不带 prompt 的修复任务从来过不了 pydantic 校验（旧测试未覆盖 repair 路径）；改为可选 + 函数体显式校验，`height_mm` 同理——schema 必填会逼宿主 LLM 编数字，违反"绝不猜尺寸"，显式报错顶回去问用户才是正确契约。真机回归：repair job 全链路 INLINE PASS（done 块=['text','image']，四路径均为绝对值）。
+- **v0.4 Agent 工具样式对齐（无服务器读取方案落地）**：产物改**绝对路径**（uvx 分发时宿主 cwd 不确定的兜底）；任务 done 时 `printguard_check_job` **内联返回诊断缩略图** `sheet_preview.jpg`（PIL 降采样 JPEG，实测 11KB，全尺寸 PNG 67KB 留路径）——agent 在对话内直接"看"诊断图讲解缺陷，零外部服务器（与 playwright 截图同款协议机制）；`quality`/`style` 改 Literal 枚举（JSON Schema 自动带 enum）；`FastMCP(instructions=...)` 随 initialize 下发四条硬规则；错误统一 raise（宿主收 is_error）。**顺手修掉第二个潜伏 bug**：`prompt` 原为 schema 必填 → 不带 prompt 的修复任务从来过不了 pydantic 校验（旧测试未覆盖 repair 路径）；改为可选 + 函数体显式校验，`height_mm` 同理——schema 必填会逼宿主 LLM 编数字，违反"绝不猜尺寸"，显式报错顶回去问用户才是正确契约。真机回归：repair job 全链路 INLINE PASS（done 块=['text','image']，四路径均为绝对值）。
 - **v0.5 P1 检测项评估：实现 → 验证 → 决策暂缓（决策过程完整留档）**：#4 间隙 / #5 小孔 / #6 密闭腔的检测与修复全部实现并跑过 selftest（8/10），收尾前做产品价值复盘，结论是**整体撤回**（printguard.py 回滚至 v0.4.0 基线）。理由：① 对目标场景（AI 生成手办/结构件）三项均非打印失败主因——P0（水密/壁厚/悬垂）才是翻车重灾区；② 小孔缩径的创客常规解法（打印后钻孔）成本低于预防；③ 密闭腔用切片器 100% 填充零成本规避，自动钻排气孔反而明显改几何；④ 间隙检测受体素分辨率硬限制（≈2×pitch，130mm 模型上 ≈0.54mm，**大于 0.4mm 阈值本身**），verdict 天然偏软，混进报告会稀释四个硬指标的公信力；⑤ 自动修复价值/风险比不划算（gap_fuse 焊死窄缝会改设计意图、扩孔 +0.06mm 不如建模端 +5% 精确）。**过程中撞出的已知盲区（留档，暂不修）**：壁厚分析网格经 fill_holes，空心件（省材料打印的常见做法）会被当实心、壁厚虚报为整体尺寸——修复方案已验证可行（分析网格 fill=False，~4 行，含空心盒正确报 5mm 壳厚的 selftest 已跑通），待后续与空心件场景需求一起评估。
 - **v0.5 功能收敛（第二轮删减）**：`material_transfer`/`part_split` 从 lux3d_client 移除（与核心主张无关且拆件对单连体 AI 生成件无效，git 历史可找回）；`concept_image` 保留——它是完整实现且实测通过的独立函数（31s 出图），可直接导入调用，无需额外 API 代码，是否接入交付链留待后续决策。B 类未验证项（uvx 端到端/MCP 生成 job/图文输入/URL 输入分支）本轮决策暂不验证，留档待测。
 - **v0.4.1 产品流程对齐（用户定义最终流程）**：用户对话 → Lux3D 生成（模型文件）→ PrintGuard 可制造校验+修复（核心工作，渲染与诊断均本地生成——**Lux3D API 不出渲染图，outputs 实证仅 GLB/ZIP**）→ 交付收敛为 **printable.3mf + turntable.gif**；diagnostic_sheet.png/sheet_preview.jpg 转为内部诊断件（agent 内联查看讲解修复用，不作交付承诺，磁盘仍生成）。MCP 结果 files 仅含 3MF+GIF，instructions 同步更新。
@@ -141,7 +141,7 @@ P0 = 生成模型翻车重灾区，先做；P1 = 实现简单且画面感强；P
   - 兼容性：orient 仍用几何法（快，候选姿态间可比）；analyze_mesh 报告 open_frac/bridged_frac，风险评分改用 open_frac；诊断图面板新增"真悬空/桥接"拆解行；风险评分仅按真悬空扣分，桥接不扣分。
   - 复杂度：约 60 行新增代码，复用 raw 体素网格，pitch 自适应（ext/300，0.15-0.4mm，内存护栏），selftest 增至 8 项（新增 stacked_boxes）。
 - **v0.5 Linux 迁移（Windows → WSL，去 Windows 兼容）**：项目开发期在 Windows，现整体迁到 Linux/WSL。改动：① 文档与 skill 里的 `.venv\Scripts\python.exe` / PowerShell 安装步骤全部换成 `.venv/bin/python` + bash/uv；② `test_mcp_client.py` 改为 Linux 路径并补 api_key 契约断言；③ 诊断图字体从写死 `["Microsoft YaHei","SimHei"]`（Linux 落空→中文方框）改为跨平台回退 `Noto Sans CJK SC / WenQuanYi Micro Hei / DejaVu Sans`；④ 删净 15738 个 Windows `*:Zone.Identifier` 附属文件；⑤ 环境重建：删掉 Windows 版 `.venv`（`Lib/Scripts` 布局），改用 uv 拉独立 CPython 3.13.18 + `uv pip install -e '.[aholo]'`；⑥ 依赖坑：`pyproject` 的 `mcp>=1,<3` 会装到 mcp 2.x，而代码用的是 v1 `FastMCP` API（2.x 已改名 `MCPServer`，直接 `ModuleNotFoundError`）→ venv 内降到 `mcp==1.30.0`，**已把 pyproject 收紧为 `mcp>=1,<2`**（否则任何新环境都会装到不兼容的 2.x）。已知边界：体素壁厚分析内存吃得凶，80mm 大面片件峰值 ~7GB（本机 7.7GB 被 OOM kill，selftest 第 8 项同因）——低配机器跑不动，属硬件上限。
-- **v0.5 云端化（面向魔搭社区托管）**：目标=用户只填「自己的 AHOLO API Key + 需求」即可用。改动：① **Key 参数化**——`start_printguard_job` 新增 `api_key`，`lux3d_client.load_key(explicit)` 优先级=入参>环境变量>secrets 文件，Asset 上传链路同步透传（公网部署平台不托管任何用户密钥，key 不落盘不进日志）；② **双传输**——stdio（本地桌面宿主）+ streamable-http（`PRINTGUARD_TRANSPORT=streamable-http`，MCP 路径 `/mcp`），FastMCP 1.30 原生支持；③ **交付件远程可达**——stdio 返回绝对路径，http 返回 HMAC 签名限时链接 `{base}/files/{job_id}/{name}?exp=&sig=`（`PRINTGUARD_FILE_SECRET` 多副本需一致，`PRINTGUARD_PUBLIC_BASE_URL` 指定公网域名）；④ **任务表落 SQLite**（`output/jobs/jobs.db`，WAL），容器重启后历史任务仍可查；⑤ **安全**——远端输入 URL 禁内网/回环地址（SSRF）、限体积（默认 64MB）、限扩展名，下载链接验签+验期（改签名 403、改过期 410）；⑥ **并发**——同一 AHOLO 账号（key 哈希标识，明文不入内存字典）生成任务进程内串行，规避平台并发上限；⑦ 新增 `/healthz` 探针、`Dockerfile`（python:3.13-slim）、`docs/deploy-modelscope.md` 部署指南、`test_mcp_http.py` 云端形态回归（MCP over HTTP + 签名下载 + 防篡改，实测 PASS）。待办：重活子进程隔离（防单任务 OOM 拖垮实例）、多副本共享对象存储、速率限制与配额。
+- **v0.5 云端化（面向魔搭社区托管）**：目标=用户只填「自己的 AHOLO API Key + 需求」即可用。改动：① **Key 参数化**——`printguard_start_job` 新增 `api_key`，`lux3d_client.load_key(explicit)` 优先级=入参>环境变量>secrets 文件，Asset 上传链路同步透传（公网部署平台不托管任何用户密钥，key 不落盘不进日志）；② **双传输**——stdio（本地桌面宿主）+ streamable-http（`PRINTGUARD_TRANSPORT=streamable-http`，MCP 路径 `/mcp`），FastMCP 1.30 原生支持；③ **交付件远程可达**——stdio 返回绝对路径，http 返回 HMAC 签名限时链接 `{base}/files/{job_id}/{name}?exp=&sig=`（`PRINTGUARD_FILE_SECRET` 多副本需一致，`PRINTGUARD_PUBLIC_BASE_URL` 指定公网域名）；④ **任务表落 SQLite**（`output/jobs/jobs.db`，WAL），容器重启后历史任务仍可查；⑤ **安全**——远端输入 URL 禁内网/回环地址（SSRF）、限体积（默认 64MB）、限扩展名，下载链接验签+验期（改签名 403、改过期 410）；⑥ **并发**——同一 AHOLO 账号（key 哈希标识，明文不入内存字典）生成任务进程内串行，规避平台并发上限；⑦ 新增 `/healthz` 探针、`Dockerfile`（python:3.13-slim）、`docs/deploy-modelscope.md` 部署指南、`test_mcp_http.py` 云端形态回归（MCP over HTTP + 签名下载 + 防篡改，实测 PASS）。待办：重活子进程隔离（防单任务 OOM 拖垮实例）、多副本共享对象存储、速率限制与配额。
 
 
 ## MCP 接入（已落地）
@@ -172,13 +172,13 @@ PRINTGUARD_TRANSPORT=streamable-http PRINTGUARD_HOST=0.0.0.0 PRINTGUARD_PORT=786
 
 托管平台侧只需要一个 ASGI 进程（Dockerfile 已就绪，见 `docs/deploy-modelscope.md`）。
 **魔搭创空间端口约定 7860**（Dockerfile 已按此配置）。
-**用户自带 AHOLO API Key**：在 `start_printguard_job` 的 `api_key` 参数传入，服务端不落盘、不写日志。
+**用户自带 AHOLO API Key**：在 `printguard_start_job` 的 `api_key` 参数传入，服务端不落盘、不写日志。
 
 | 工具 | 入参 | 说明 |
 |---|---|---|
-| start_printguard_job | prompt（生成必填）或 file_or_url（修复），height_mm(必填), quality(fast/fine), style, image, **api_key（生成必填）** | 提交即返回 job_id，不阻塞宿主 |
-| check_printguard_job | job_id | 轮询状态；done 时返回交付件（stdio=绝对路径 / http=签名下载链接）+ 内联诊断缩略图（ImageContent） |
-| analyze_printability | file_or_url, height_mm(必填) | 只检测，秒级同步返回（免 key） |
+| printguard_start_job | prompt（生成必填）或 file_or_url（修复），height_mm(必填), quality(fast/fine), style, image, **api_key（生成必填）** | 提交即返回 job_id，不阻塞宿主 |
+| printguard_check_job | job_id | 轮询状态；done 时返回交付件（stdio=绝对路径 / http=签名下载链接）+ 内联诊断缩略图（ImageContent） |
+| printguard_analyze_printability | file_or_url, height_mm(必填) | 只检测，秒级同步返回（免 key） |
 
 v0.4 起 Agent 工具样式对齐：`instructions` 随 initialize 下发硬规则（先问尺寸 / 生成串行 / 3MF 为基准 / C-D 先告知 / key 由用户给）；`quality`/`style` 为 enum schema；`height_mm` 故意不做 schema 必填——缺参会显式报错把宿主顶回去问用户，避免 LLM 为过校验编数字；任务 done 时内联返回诊断缩略图（`sheet_preview.jpg`，实测 ~11KB）+ 全部交付件位置。
 
