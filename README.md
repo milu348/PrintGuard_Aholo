@@ -57,8 +57,8 @@ AI 文生 3D（Lux3D 等）产出的模型看似精美，直接送 FDM 打印机
 - 接入后对 Agent 说：**"帮我做一个能打印的手机支架，高 10 厘米"**
 
 > ☁️ **免安装形态**：本服务已上架 [魔搭 MCP 广场（hosted）](https://www.modelscope.cn/mcp/servers/miluzzz/PrintGuard_Aholo)，
-> 平台算力托管运行，无需本地安装 Python 环境；也支持直连魔搭创空间实例（Streamable HTTP + 个人令牌），
-> 详见下方[部署形态](#🌐-部署形态)。
+> 由魔搭 MCP 部署服务的平台算力托管运行，社区用户无需安装任何环境。
+> 另有网页 Demo（创空间）正在改造中，见下方[部署形态](#🌐-部署形态)。
 
 ## 🧰 工具一览
 
@@ -113,28 +113,12 @@ AI 文生 3D（Lux3D 等）产出的模型看似精美，直接送 FDM 打印机
 
 | 形态 | 算力 | 产物交付 | 适合 |
 |---|---|---|---|
-| [魔搭 MCP 广场（hosted）](https://www.modelscope.cn/mcp/servers/miluzzz/PrintGuard_Aholo) | 平台托管沙箱 | 平台内交付 | 免安装体验、广场用户 |
-| 创空间实例（[Demo](https://www.modelscope.cn/studios/miluzzz/PrintGuard)） | 魔搭 2vCPU/8GB 免费 | 签名下载链接 | 直连 Streamable HTTP（需 ModelScope 令牌）|
+| [魔搭 MCP 广场（hosted）](https://www.modelscope.cn/mcp/servers/miluzzz/PrintGuard_Aholo) | **魔搭 MCP 部署服务**（平台免费资源池）| 报告内联；文件交付迭代中 | 免安装体验、广场用户 |
 | 本地 stdio（上方配置） | 你自己的机器 | 本地绝对路径 | 桌面 Agent、产物直接进切片器 |
+| 创空间 Demo（改造中） | 调用上述 hosted 服务 | 与 Agent 用户完全一致 | 网页用户，无需知道 MCP 的存在 |
 
-<details>
-<summary>方式二配置（直连创空间实例，Streamable HTTP）</summary>
-
-```text
-{
-  "mcpServers": {
-    "PrintGuard_Aholo": {
-      "type": "streamable_http",
-      "url": "https://studio-miluzzz-printguard.api-inference.modelscope.net/mcp",
-      "headers": {
-        "Authorization": "Bearer <你的 ModelScope 访问令牌>"
-      }
-    }
-  }
-}
-```
-
-</details>
+> 架构说明：MCP 服务本体运行于魔搭 MCP 部署服务的平台算力；创空间定位为**产品 Demo**——
+> 作为 MCP 的调用方提供网页交互，与服务运行解耦。
 
 ## 🔍 质量保障
 
