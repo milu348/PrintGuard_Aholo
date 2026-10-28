@@ -423,7 +423,7 @@ async def download_file(request: Request):
 def _run_job(job_id: str, kind: str, prompt: str | None, file_or_url: str | None,
              height_mm: float, quality: str, style: str,
              image: str | None = None, api_key: str | None = None,
-             img_urls: list[str] | None = None) -> None:
+             img_urls: list[str] | None = None, fmt: str = "3mf") -> None:
     try:
         _STORE.update(job_id, status="running")
         if kind == "generate":
@@ -432,14 +432,24 @@ def _run_job(job_id: str, kind: str, prompt: str | None, file_or_url: str | None
                 summary = run_pipeline(prompt=prompt, height_mm=height_mm,
                                        quality=quality, style=style, image=image,
                                        name=job_id, out_dir=str(JOB_DIR), api_key=key,
-                                       img_urls=img_urls)
+                                       img_urls=img_urls, fmt=fmt)
             if summary.get("failed"):
                 raise RuntimeError(f"生成失败 task={summary.get('taskid')} "
                                    f"status={summary.get('status')} {summary.get('error', '')}")
         else:  # repair
             src = _fetch_file(file_or_url, JOB_DIR / job_id)
-            summary = run_repair(str(src), height_mm, name=job_id, out_dir=str(JOB_DIR))
-        files = {k: summary.get(k) for k in ("3mf", "gif", "sheet", "sheet_preview")}
+            summary = run_repair(str(src), height_mm, name=job_id, out_dir=str(JOB_DIR),
+                                 fmt=fmt)
+        files = {k: summary.get(k) for k in ("3mf", "stl", "render", "report_md",
+                                             "gif", "sheet", "sheet_preview")
+                 if summary.get(k)}
+        for i, u in enumerate(img_urls or []):   # Lux3D 生成的图片输出给用户
+            try:
+                ext = ".png" if ".png" in u.split("?")[0] else ".jpg"
+                p = lux3d_client.download(u, str(JOB_DIR / job_id / f"lux3d_image_{i}{ext}"))
+                files[f"lux3d_image_{i}"] = str(p)
+            except Exception:
+                pass
         meta = {k: summary.get(k) for k in ("risk", "watertight", "overhang_frac",
                                             "open_overhang_frac", "bridged_frac",
                                             "repair_steps")}
@@ -506,6 +516,7 @@ def printguard_start_job(prompt: str | None = None, height_mm: float | None = No
                          image: str | None = None,
                          concept_image_url: str | None = None,
                          four_view_urls: list[str] | None = None,
+                         fmt: Literal["3mf", "stl"] = "3mf",
                          api_key: str | None = None):
     """提交一个 PrintGuard_Aholo 任务（立即返回 job_id，不阻塞）。用 printguard_check_job 轮询结果。
 
@@ -521,6 +532,7 @@ def printguard_start_job(prompt: str | None = None, height_mm: float | None = No
         image: 可选参考图（本机路径或公网 URL），与 prompt 同时使用——图文结合生成
         concept_image_url: 概念图 URL（lux3d_concept_image 的产物，经用户确认后传入）——走图生 3D
         four_view_urls: 四视图 URL 列表（lux3d_four_view 的产物）——多视角图生 3D，几何一致性更好
+        fmt: 模型文件格式，3mf 或 stl（用户自选）
         api_key: 用户的 AHOLO API Key（公网部署必填，本地可留空走环境变量）
     """
     # height_mm 故意不在 schema 层 required：required 会逼宿主 LLM 编一个数，
@@ -548,7 +560,7 @@ def printguard_start_job(prompt: str | None = None, height_mm: float | None = No
     _STORE.create(job_id, kind)
     threading.Thread(target=_run_job, daemon=True,
                      args=(job_id, kind, prompt, file_or_url, height_mm,
-                           quality, style, image, key or None, img_urls)).start()
+                           quality, style, image, key or None, img_urls, fmt)).start()
     return json.dumps({"job_id": job_id, "status": "queued",
                        "hint": "用 printguard_check_job(job_id) 轮询；生成 fine 档约 10min"},
                       ensure_ascii=False)

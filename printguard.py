@@ -781,6 +781,45 @@ def render_diagnostic_sheet(m: trimesh.Trimesh, report: dict, steps, out_png: st
     return out_png
 
 
+def render_model_png(m: trimesh.Trimesh, out_png: str, max_faces: int = 8000) -> str:
+    """产品渲染图：最终模型的干净单视角渲染——无诊断着色、无指标面板（交付给用户）。"""
+    import os
+    import matplotlib
+    matplotlib.use("Agg")
+    cache = Path(".mplcache")
+    cache.mkdir(exist_ok=True)
+    os.environ.setdefault("MPLCONFIGDIR", str(cache.resolve()))
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "DejaVu Sans"]
+    plt.rcParams["axes.unicode_minus"] = False
+
+    r = m
+    if len(r.faces) > max_faces:
+        try:
+            r = r.simplify_quadric_decimation(face_count=max_faces)
+        except Exception:
+            pass
+    elev = np.radians(28); azim = np.radians(-50)
+    Ldir = np.array([np.cos(elev) * np.cos(azim), np.cos(elev) * np.sin(azim), np.sin(elev)])
+    shade = (0.45 + 0.55 * np.clip(r.face_normals @ Ldir, 0.0, 1.0))[:, None]
+    base = np.array([0.64, 0.67, 0.72])       # 浅灰蓝：中性产品观感
+    colors = np.clip(base * shade, 0, 1)
+
+    fig = plt.figure(figsize=(6, 6), dpi=140)
+    fig.patch.set_facecolor("white")
+    ax = fig.add_subplot(projection="3d")
+    ax.add_collection3d(Poly3DCollection(r.triangles, facecolors=colors, edgecolors="none"))
+    b0, b1 = r.bounds
+    c = (b0 + b1) / 2
+    s = float((b1 - b0).max()) / 2 * 1.05
+    ax.set_xlim(c[0] - s, c[0] + s); ax.set_ylim(c[1] - s, c[1] + s); ax.set_zlim(c[2] - s, c[2] + s)
+    ax.set_box_aspect((1, 1, 1)); ax.view_init(28, -50); ax.set_axis_off()
+    fig.savefig(out_png, bbox_inches="tight", pad_inches=0.05, facecolor="white")
+    plt.close(fig)
+    return out_png
+
+
 def render_turntable_gif(m: trimesh.Trimesh, out_gif: str, frames: int = 16,
                          max_faces: int = 6000) -> str:
     """旋转一周 GIF：agent 对话内的"准 3D"预览（聊天里内嵌，无需浏览器）。"""

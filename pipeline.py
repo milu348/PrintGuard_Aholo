@@ -26,7 +26,103 @@ QUALITY_PRESETS = {
 }
 
 
-def deliver_outputs(fixed, after, steps, out) -> dict:
+def write_report_md(before: dict, after: dict, steps, out_md) -> str:
+    """诊断报告 Markdown（单独成档，交付给用户）：检测对比表/修复步骤/建议。"""
+    from datetime import datetime
+    b = (before or {}).get("checks", {}); a = (after or {}).get("checks", {})
+    rb, ra = (before or {}).get("risk", {}), (after or {}).get("risk", {})
+    wtb, wta = b.get("watertight", {}), a.get("watertight", {})
+    ob, oa = b.get("overhang", {}), a.get("overhang", {})
+    wb, wa = b.get("wall_thickness", {}), a.get("wall_thickness", {})
+    ib, ia = b.get("islands", {}), a.get("islands", {})
+    def tick(x): return "✅" if x else "❌"
+    def fmt(x): return "-" if x is None else x
+    L = ["# PrintGuard_Aholo 诊断报告", "",
+         f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+         f"- 风险评分：{fmt(rb.get('grade'))}({fmt(rb.get('score'))}) → **{fmt(ra.get('grade'))}({fmt(ra.get('score'))})**",
+         "", "## 检测结果（修复前 → 修复后）", "",
+         "| 项目 | 修复前 | 修复后 |", "|---|---|---|",
+         f"| 水密性 | {tick(wtb.get('watertight'))} | {tick(wta.get('watertight'))} |",
+         f"| 边界边 / 非流形边 | {fmt(wtb.get('boundary_edges'))} / {fmt(wtb.get('nonmanifold_edges'))} | {fmt(wta.get('boundary_edges'))} / {fmt(wta.get('nonmanifold_edges'))} |",
+         f"| 悬垂(>{fmt(oa.get('threshold_deg', 45))}°) 面积占比 | {fmt(ob.get('bad_frac'))} | {fmt(oa.get('bad_frac'))} |",
+         f"| 真悬空（需支撑）| {fmt(ob.get('open_frac'))} | {fmt(oa.get('open_frac'))} |",
+         f"| 最小壁厚（阈值 {fmt(wa.get('threshold_mm'))}mm）| {fmt(wb.get('min_wall_mm'))} [{fmt(wb.get('verdict'))}] | {fmt(wa.get('min_wall_mm'))} [{fmt(wa.get('verdict'))}] |",
+         f"| 连通体 / 碎片孤岛 | {fmt(ib.get('bodies'))} / {fmt(ib.get('tiny_islands'))} | {fmt(ia.get('bodies'))} / {fmt(ia.get('tiny_islands'))} |", ""]
+    regions = (wb.get("thin_regions") or [])
+    if regions:
+        L.append("### 修复前薄弱区")
+        for r in regions:
+            L.append(f"- **区域 {r['id']}**：{r['voxels']} 体素，区内最小壁厚 {fmt(r['t_min_mm'])}mm，"
+                     f"中心 {r['center_mm']}，范围 {r['bbox_mm']}")
+        L.append("")
+    L.append("## 修复步骤")
+    L += [f"{i}. {s}" for i, s in enumerate(steps or [], 1)]
+    L.append("")
+    L.append("## 建议")
+    tips = []
+    if not wta.get("watertight"):
+        tips.append("模型仍不水密：建议重新生成或人工修复后再打印。")
+    if (oa.get("open_frac") or 0) > 0.05:
+        tips.append("仍有真悬空区域：切片时请开启支撑。")
+    if wa.get("verdict") == "fail":
+        tips.append("最小壁厚仍低于阈值：建议加厚或简化该细节。")
+    if (ia.get("tiny_islands") or 0) > 0:
+        tips.append("存在碎片孤岛：切片前建议清理。")
+    if not tips:
+        tips.append("未发现遗留问题，可直接切片打印。")
+    L += [f"- {t}" for t in tips]
+    text = chr(10).join(L)
+    Path(out_md).write_text(text, encoding="utf-8")
+    return text
+
+
+def deliver_outputs(fixed, after, steps, out, fmt: str = "3mf",
+                    before: dict | None = None) -> dict:
+    """交付件（用户产物）：模型文件（3mf/stl 二选一）+ render.png（干净渲染）
+    + turntable.gif + report.md（诊断报告单独成档）。
+    diagnostic_sheet.png / sheet_preview.jpg 为内部诊断件（agent 查看），不属交付承诺。
+    路径一律绝对值（uvx 分发时宿主 cwd 不确定的兜底）。单项失败不阻塞其余交付。"""
+    fmt = "stl" if str(fmt).lower() == "stl" else "3mf"
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    d = {}
+    fmodel = out / f"printable.{fmt}"
+    fixed.export(str(fmodel))
+    d[fmt] = str(fmodel.resolve())
+    try:
+        rd = out / "render.png"
+        pg.render_model_png(fixed, rd)
+        d["render"] = str(rd.resolve())
+    except Exception as e:
+        d["render"] = f"render skipped: {e}"[:120]
+    try:
+        md = out / "report.md"
+        write_report_md(before, after, steps, md)
+        d["report_md"] = str(Path(md).resolve())
+    except Exception as e:
+        d["report_md"] = f"report skipped: {e}"[:120]
+    try:
+        sh = out / "diagnostic_sheet.png"
+        pg.render_diagnostic_sheet(fixed, after, steps, sh)
+        d["sheet"] = str(sh.resolve())
+        try:  # 内联用缩略图（JPEG ~百KB 级，控制 agent 上下文体积；全尺寸 PNG 留在路径）
+            from PIL import Image as PILImage
+            th = out / "sheet_preview.jpg"
+            with PILImage.open(sh) as im:
+                im.thumbnail((512, 512))
+                im.convert("RGB").save(th, "JPEG", quality=85)
+            d["sheet_preview"] = str(th.resolve())
+        except Exception:
+            pass  # 缩略图失败不影响交付，agent 退化为读路径
+    except Exception as e:
+        d["sheet"] = f"sheet skipped: {e}"[:120]
+    try:
+        gf = out / "turntable.gif"
+        pg.render_turntable_gif(fixed, gf)
+        d["gif"] = str(gf.resolve())
+    except Exception as e:
+        d["gif"] = f"gif skipped: {e}"[:120]
+    return d
     """交付件：printable.3mf（打印基准）+ turntable.gif（渲染预览）。
     diagnostic_sheet.png（缺陷着色+中文指标）与 sheet_preview.jpg 为内部诊断件：
     供 agent 内联查看、讲解修复，不作为交付承诺。路径一律绝对值
@@ -62,7 +158,8 @@ def deliver_outputs(fixed, after, steps, out) -> dict:
 
 
 def run_repair(file_path: str, height_mm: float, name: str | None = None,
-               out_dir: str = "output/runs", no_orient: bool = False) -> dict:
+               out_dir: str = "output/runs", no_orient: bool = False,
+               fmt: str = "3mf") -> dict:
     """修复已有 mesh（CLI/MCP 复用）：加载 → 检测 → 修复 → 交付。返回 summary dict。"""
     name = name or time.strftime("repair_%H%M%S")
     out = Path(out_dir) / name
@@ -76,7 +173,7 @@ def run_repair(file_path: str, height_mm: float, name: str | None = None,
             steps.append(f"remesh({p2}mm)")
         except Exception:
             pass  # 失败时按原网格交付（大但正确）
-    deliver = deliver_outputs(fixed, after, steps, out)
+    deliver = deliver_outputs(fixed, after, steps, out, fmt=fmt, before=before)
     return {
         "file": str(Path(file_path).resolve()), "height_mm": height_mm,
         "risk": f"{before['risk']['grade']}->{after['risk']['grade']}",
@@ -95,7 +192,7 @@ def run_pipeline(prompt: str, height_mm: float, quality: str = "fast",
                  from_file: str | None = None, name: str | None = None,
                  out_dir: str = "output/runs", no_orient: bool = False,
                  api_key: str | None = None,
-                 img_urls: list[str] | None = None) -> dict:
+                 img_urls: list[str] | None = None, fmt: str = "3mf") -> dict:
     """一条龙核心（CLI 与 MCP 复用）。返回 summary dict（失败时含 failed 标记）。
     image：可选参考图（本地路径或 URL），与 prompt 同时使用（文生 3D 的 img 字段）。
     img_urls：概念图/多视角 URL 列表——提供时走图生 3D（prompt 可为空），概念先行工作流的产物。
