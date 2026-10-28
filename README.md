@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ PrintGuard
+# 🛡️ PrintGuard_Aholo
 
 **FDM 打印件的「生成 → 体检 → 修复 → 交付」一站式 MCP 服务**
 
@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/turntable-preview
 
 AI 文生 3D（Lux3D 等）产出的模型看似精美，直接送 FDM 打印机却常常翻车：
 
-| 痛点 | 后果 | PrintGuard 的处理 |
+| 痛点 | 后果 | PrintGuard_Aholo 的处理 |
 |---|---|---|
 | 不水密（壳汤/破面） | 切片直接失败 | 体素重构，输出恒为水密实体 |
 | 悬垂超 45° | 拉丝、坍塌、报废 | 悬垂三分类（真悬空/桥接/贴床），区分真问题与误报 |
@@ -39,7 +39,7 @@ AI 文生 3D（Lux3D 等）产出的模型看似精美，直接送 FDM 打印机
 ```json
 {
   "mcpServers": {
-    "printguard": {
+    "PrintGuard_Aholo": {
       "command": "uvx",
       "args": ["printguard-aholo@latest"],
       "env": {
@@ -123,7 +123,7 @@ AI 文生 3D（Lux3D 等）产出的模型看似精美，直接送 FDM 打印机
 ```text
 {
   "mcpServers": {
-    "printguard": {
+    "PrintGuard_Aholo": {
       "type": "streamable_http",
       "url": "https://studio-miluzzz-printguard.api-inference.modelscope.net/mcp",
       "headers": {
@@ -153,10 +153,10 @@ AI 文生 3D（Lux3D 等）产出的模型看似精美，直接送 FDM 打印机
 
 ## 📖 文档
 
-- [PrintGuard.md](PrintGuard.md) —— 技术方案与设计决策（Lux3D 接入、算法选型、工程约束）
+- [PrintGuard_Aholo.md](PrintGuard_Aholo.md) —— 技术方案与设计决策（Lux3D 接入、算法选型、工程约束）
 - [docs/deploy-modelscope.md](docs/deploy-modelscope.md) —— 魔搭创空间部署指南
 - [mcp_server.py](mcp_server.py) —— MCP 服务实现（stdio / streamable-http 双传输）
 
 ## 📄 License
 
-[MIT](LICENSE) © PrintGuard contributors
+[MIT](LICENSE) © PrintGuard_Aholo contributors

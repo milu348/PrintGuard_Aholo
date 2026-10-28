@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PrintGuard v0.1 —— 最简版 CLI：analyze / repair / selftest
+"""PrintGuard_Aholo v0.1 —— 最简版 CLI：analyze / repair / selftest
 
 检测（P0）：水密性、悬垂（45°，贴床面豁免）、最小壁厚（体素 EDT 中轴法）
 修复：体素重构（封小洞 + 实心化 + marching cubes）+ 自动摆向（悬垂最小化）
@@ -572,7 +572,7 @@ def render_diagnostic_sheet(m: trimesh.Trimesh, report: dict, steps, out_png: st
     risk = report.get("risk") or {}
     gmin = oh.get("min_wall_mm")
     lines = [
-        "PrintGuard 诊断报告",
+        "PrintGuard_Aholo 诊断报告",
         f"风险: {risk.get('grade', '-')} ({risk.get('score', '-')}/100)",
         "",
         f"水密性: {'通过' if wt.get('watertight') else '未通过'}",
@@ -788,7 +788,7 @@ def main(argv=None) -> int:
         pass
     ap = argparse.ArgumentParser(
         prog="printguard",
-        description="PrintGuard：FDM 可制造性检测/修复")
+        description="PrintGuard_Aholo：FDM 可制造性检测/修复")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     a1 = sub.add_parser("analyze", help="检测 mesh，输出 JSON 报告")

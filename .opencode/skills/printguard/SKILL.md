@@ -1,10 +1,10 @@
 ---
 name: printguard
-description: PrintGuard——FDM 打印件的"生成→可制造性校核→修复→交付"工具链（Lux3D 生成 + 几何检测修复 + STL/3MF 交付 + 诊断报告）。当用户想生成可 3D 打印的模型、检查/修复 mesh 能否打印、要可打印文件或诊断报告时使用。
+description: PrintGuard_Aholo——FDM 打印件的"生成→可制造性校核→修复→交付"工具链（Lux3D 生成 + 几何检测修复 + STL/3MF 交付 + 诊断报告）。当用户想生成可 3D 打印的模型、检查/修复 mesh 能否打印、要可打印文件或诊断报告时使用。
 whenToUse: 用户提到 3D 打印、FDM、可打印、修模型、STL/3MF、切片、打印失败、Lux3D 生成实物、手机支架/耳机架等实物件时触发。
 ---
 
-# PrintGuard 使用指令
+# PrintGuard_Aholo 使用指令
 
 工作区即工具箱（本 skill 所在项目根，Linux / WSL）：
 

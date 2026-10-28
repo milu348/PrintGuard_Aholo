@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PrintGuard MCP Server —— Linux 优先；stdio（本地桌面宿主）/ streamable-http（云端托管）。
+"""PrintGuard_Aholo MCP Server —— Linux 优先；stdio（本地桌面宿主）/ streamable-http（云端托管）。
 
 本地（Claude Desktop / Cursor / DSH）：
   {"mcpServers": {"printguard": {"command": "<repo>/.venv/bin/python",
@@ -63,7 +63,7 @@ ALLOW_PRIVATE_URL = os.environ.get("PRINTGUARD_ALLOW_PRIVATE_URLS", "0") == "1"
 
 # 随服务器下发的使用须知（MCP initialize 时宿主即可读到，不依赖 skill 文档）
 _INSTRUCTIONS = """\
-PrintGuard：把 Lux3D 生成的 3D 模型修成可 FDM 打印的 3MF 并交付诊断报告。
+PrintGuard_Aholo：把 Lux3D 生成的 3D 模型修成可 FDM 打印的 3MF 并交付诊断报告。
 使用规则：
 1. height_mm（目标尺寸 mm）必须先向终端用户确认后传入，绝不猜测；
 2. 生成类任务同一 AHOLO 账号全平台并发为 1：必须等 check_printguard_job 返回 done/error 再提交下一个；
@@ -71,7 +71,7 @@ PrintGuard：把 Lux3D 生成的 3D 模型修成可 FDM 打印的 3MF 并交付�
 4. 交付 = printable.3mf（打印基准）+ turntable.gif（渲染预览）；诊断图（缺陷着色）仅供你查看讲解修复，不作为文件交付；
 5. risk 为 C/D 时先向用户逐项告知问题再交付；薄壁修不动时如实说"建议重新设计"，不假装能修。"""
 
-mcp = FastMCP("printguard", instructions=_INSTRUCTIONS,
+mcp = FastMCP("PrintGuard_Aholo", instructions=_INSTRUCTIONS,
               host=HOST, port=PORT, stateless_http=STATELESS == "1")
 
 
@@ -253,7 +253,7 @@ def _files_payload(files: dict, job_id: str) -> dict:
 _LANDING_HTML = """<!doctype html>
 <html lang="zh"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PrintGuard — FDM 打印件体检</title>
+<title>PrintGuard_Aholo — FDM 打印件体检</title>
 <style>
  body{font-family:system-ui,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1115;color:#e6e8ee}
  .card{max-width:660px;margin:24px;padding:36px 40px;border:1px solid #2a2f3a;border-radius:16px;background:#161a22}
@@ -264,7 +264,7 @@ _LANDING_HTML = """<!doctype html>
  ul{color:#aeb6c4;line-height:2.0;padding-left:22px}
 </style></head>
 <body><div class="card">
-<h1>🛡️ PrintGuard <span id="st" class="bad">检查中…</span></h1>
+<h1>🛡️ PrintGuard_Aholo <span id="st" class="bad">检查中…</span></h1>
 <p>FDM 打印件的生成 → 可制造性校核 → 修复 → 交付（MCP 服务）。</p>
 <p>本服务通过 <b>MCP 协议</b>调用，没有网页交互界面。在支持 MCP 的客户端（OpenCode / Claude / Cursor 等）里这样接入：</p>
 <ul>
@@ -451,7 +451,7 @@ def start_printguard_job(prompt: str | None = None, height_mm: float | None = No
                          file_or_url: str | None = None,
                          image: str | None = None,
                          api_key: str | None = None):
-    """提交一个 PrintGuard 任务（立即返回 job_id，不阻塞）。用 check_printguard_job 轮询结果。
+    """提交一个 PrintGuard_Aholo 任务（立即返回 job_id，不阻塞）。用 check_printguard_job 轮询结果。
 
     两种任务：只给 prompt = 生成新模型（Lux3D → 检测 → 修复 → 交付）；
     给 file_or_url（mesh 文件）+ prompt 可留空说明 = 修复已有模型。
@@ -487,7 +487,7 @@ def start_printguard_job(prompt: str | None = None, height_mm: float | None = No
 
 @mcp.tool()
 def check_printguard_job(job_id: str):
-    """查询 PrintGuard 任务状态：queued/running/done/error；done 时返回交付件
+    """查询 PrintGuard_Aholo 任务状态：queued/running/done/error；done 时返回交付件
     （printable.3mf + turntable.gif）——本地部署给绝对路径，云端部署给签名下载链接，
     并内联附上诊断缩略图（ImageContent——缺陷着色图，供你查看讲解修复，非交付文件）。"""
     job = _STORE.get(job_id)
@@ -523,7 +523,7 @@ def analyze_printability(file_or_url: str, height_mm: float):
 def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(prog="printguard-mcp",
-                                 description="PrintGuard MCP Server（stdio / streamable-http）")
+                                 description="PrintGuard_Aholo MCP Server（stdio / streamable-http）")
     ap.add_argument("--transport", choices=["stdio", "streamable-http"], default=None,
                     help=f"传输方式（默认读环境变量 PRINTGUARD_TRANSPORT，当前 {TRANSPORT}）")
     ap.add_argument("--host", default=None, help=f"监听地址（默认 {HOST}）")

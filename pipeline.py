@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PrintGuard 一条龙：生成 → 检测 → 修复 → 交付 3MF + 诊断图 + GIF
+"""PrintGuard_Aholo 一条龙：生成 → 检测 → 修复 → 交付 3MF + 诊断图 + GIF
 
 双入口：
   CLI：  python pipeline.py "prompt" --height-mm 130 --quality fine
@@ -174,7 +174,7 @@ def main(argv=None) -> int:
     except Exception:
         pass
     ap = argparse.ArgumentParser(prog="pipeline",
-                                 description="PrintGuard 一条龙：生成→检测→修复→交付")
+                                 description="PrintGuard_Aholo 一条龙：生成→检测→修复→交付")
     ap.add_argument("prompt", help="要生成的模型描述")
     ap.add_argument("--height-mm", type=float, required=True,
                     help="目标尺寸：模型最大边缩放到该 mm（必填）")
