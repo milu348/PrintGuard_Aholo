@@ -17,6 +17,7 @@ import argparse
 import json
 import math
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +25,44 @@ import trimesh
 
 OVERHANG_COS = math.cos(math.radians(45.0))
 BED_SLAB = 0.3  # mm：视为贴床的底部厚度
-MIN_WALL = 0.8  # mm：最小壁厚阈值（2×0.4 喷嘴）
+MIN_WALL = 0.8  # mm：最小壁厚阈值（2×0.4 喷嘴）——默认 profile 的值；运行时以 PrinterProfile 为准
+
+
+# ---------- 打印机 profile（阈值参数化：同一模型对不同打印机结论不同） ----------
+
+@dataclass
+class PrinterProfile:
+    name: str = "generic-0.4"
+    nozzle_mm: float = 0.4
+    layer_mm: float = 0.2
+    min_wall_mm: float = 0.8      # ≈ 2×喷嘴
+    min_hole_mm: float = 0.8      # 孔径下限（预留：孔检测）
+    overhang_deg: float = 45.0
+    island_min_mm3: float = 60.0  # 低于此体积的孤岛视为碎片（飞件风险）
+    bridge_mm: float = 10.0
+
+
+BUILTIN_PROFILES = {
+    "generic-0.4": PrinterProfile(),
+    "mini-0.2": PrinterProfile(name="mini-0.2", nozzle_mm=0.2, layer_mm=0.1,
+                               min_wall_mm=0.4, min_hole_mm=0.4,
+                               island_min_mm3=15.0, overhang_deg=50.0),
+}
+
+
+def load_profile(ref: str | None = None) -> PrinterProfile:
+    """按名称取内置 profile，或按路径加载自定义 JSON（缺省字段回退内置默认）。"""
+    if not ref:
+        return BUILTIN_PROFILES["generic-0.4"]
+    if ref in BUILTIN_PROFILES:
+        return BUILTIN_PROFILES[ref]
+    p = Path(ref)
+    if p.exists():
+        data = json.loads(p.read_text(encoding="utf-8"))
+        base = BUILTIN_PROFILES.get(data.get("name"), PrinterProfile())
+        merged = {**base.__dict__, **{k: v for k, v in data.items() if k in base.__dict__}}
+        return PrinterProfile(**merged)
+    raise ValueError(f"未知打印机 profile: {ref}（可选 {sorted(BUILTIN_PROFILES)} 或 JSON 文件路径）")
 
 
 # ---------- 基础 ----------
@@ -37,20 +75,21 @@ def load_mesh(path: str, height_mm: float | None = None) -> trimesh.Trimesh:
     return m
 
 
-def overhang_mask(m: trimesh.Trimesh):
-    """悬垂/贴床逐面掩码（几何法）：悬垂=法线朝下超 45° 且非贴床薄层。"""
+def overhang_mask(m: trimesh.Trimesh, deg: float = 45.0):
+    """悬垂/贴床逐面掩码（几何法）：悬垂=法线朝下超过 deg 度且非贴床薄层。"""
     nz = m.face_normals[:, 2]
     fz = m.triangles[:, :, 2].max(axis=1)
     zmin = float(m.bounds[0][2])
     on_bed = (fz - zmin) <= BED_SLAB
-    return (nz < -OVERHANG_COS) & ~on_bed, (nz < -0.9) & on_bed
+    cos_t = float(np.cos(np.radians(deg)))
+    return (nz < -cos_t) & ~on_bed, (nz < -0.9) & on_bed
 
 
-def overhang_stats(m: trimesh.Trimesh):
+def overhang_stats(m: trimesh.Trimesh, deg: float = 45.0):
     """几何法悬垂统计（基于 overhang_mask）。orient 沿用（快，候选姿态间可比）；
     对外交付的诚实数字见 _support_split（悬垂面向下支撑检查）。"""
     area = m.area_faces
-    down, bed = overhang_mask(m)
+    down, bed = overhang_mask(m, deg)
     bad_area = float(area[down].sum())
     total = float(area.sum())
     return bad_area, (bad_area / total if total else 0.0), float(area[bed].sum())
@@ -160,13 +199,13 @@ def _raw_grid(m: trimesh.Trimesh, pitch: float) -> np.ndarray:
     return _surface_voxels(w, pitch)
 
 
-def _support_split(m: trimesh.Trimesh) -> dict | None:
-    """#3 悬垂支撑检查：对每个悬垂面（法线 >45° 朝下、非贴床）沿重力方向在
+def _support_split(m: trimesh.Trimesh, deg: float = 45.0) -> dict | None:
+    """#3 悬垂支撑检查：对每个悬垂面（法线朝下超 deg 度、非贴床）沿重力方向在
     raw 体素网格中向下探测 BRIDGE_MM——下方有材料=桥接/贴材料（无需支撑），
     全程无材料=真悬空（需支撑）。修复几何法的堆叠贴合面误报
     （该误报类是开发日志挂了很多轮的已知缺陷）。
     返回 None = 面积为零（无法判断）。"""
-    down, _bed = overhang_mask(m)
+    down, _bed = overhang_mask(m, deg)
     area = m.area_faces
     total = float(area.sum())
     if total <= 0:
@@ -221,9 +260,67 @@ def watertight_stats(m: trimesh.Trimesh) -> dict:
     )
 
 
+def island_stats(m: trimesh.Trimesh, profile: PrinterProfile) -> dict:
+    """孤岛检测：连通体计数 + 小碎片识别（悬浮碎块/细须——切片丢弃或打印中飞件）。
+    主域=面积最大的连通体；体积 < island_min 的非主域计为 tiny_islands。"""
+    try:
+        parts = m.split(only_watertight=False)
+    except Exception:
+        parts = [m]
+    if len(parts) <= 1:
+        return {"bodies": 1, "islands": 0, "tiny_islands": 0, "verdict": "pass", "details": []}
+    main = max(parts, key=lambda p: p.area)
+    islands = []
+    for p in parts:
+        if p is main:
+            continue
+        try:
+            vol = float(max(p.convex_hull.volume, 0.0))
+        except Exception:
+            vol = 0.0
+        islands.append({"faces": len(p.faces), "area_mm2": round(float(p.area), 1),
+                        "volume_mm3": round(vol, 1),
+                        "bbox_mm": [round(float(x), 1) for x in p.extents]})
+    tiny = [i for i in islands if i["volume_mm3"] < profile.island_min_mm3]
+    return {"bodies": len(parts), "islands": len(islands),
+            "tiny_islands": len(tiny),
+            "main_area_frac": round(float(main.area) / max(float(m.area), 1e-9), 4),
+            "details": sorted(islands, key=lambda i: -i["volume_mm3"])[:5],
+            "verdict": "warn" if islands else "pass"}
+
+
+def repair_island_clean(m: trimesh.Trimesh, profile: PrinterProfile):
+    """修复步骤：删除体积 < island_min 的碎片孤岛（体积未知者保守保留）。
+    返回 (mesh, 描述|None)。"""
+    try:
+        parts = m.split(only_watertight=False)
+    except Exception:
+        return m, None
+    if len(parts) <= 1:
+        return m, None
+    main = max(parts, key=lambda p: p.area)
+    keep, removed = [], []
+    for p in parts:
+        if p is main:
+            keep.append(p)
+            continue
+        try:
+            vol = float(max(p.convex_hull.volume, 0.0))
+        except Exception:
+            vol = float("inf")
+        if vol >= profile.island_min_mm3:
+            keep.append(p)
+        else:
+            removed.append(round(vol, 1))
+    if not removed:
+        return m, None
+    return trimesh.util.concatenate(keep), f"island_clean(移除 {len(removed)} 个碎片 {removed}mm³)"
+
+
 def risk_grade(wt: bool, oh_frac: float, nonmanifold: int, degen: int,
-               wall: dict | None = None):
+               wall: dict | None = None, tiny_islands: int = 0):
     score = 100.0
+    score -= min(6.0, 2.0 * max(0, tiny_islands))   # 碎片孤岛：飞件风险（小幅扣分）
     if not wt:
         score -= 35
     if nonmanifold:
@@ -241,24 +338,30 @@ def risk_grade(wt: bool, oh_frac: float, nonmanifold: int, degen: int,
     return g, round(score, 1)
 
 
-def analyze_mesh(m: trimesh.Trimesh, thickness: bool | None = None) -> dict:
+def analyze_mesh(m: trimesh.Trimesh, thickness: bool | None = None,
+                 profile: PrinterProfile | None = None) -> dict:
+    pf = profile or load_profile(None)
     wt = watertight_stats(m)
-    bad_area, oh_frac, bed_area = overhang_stats(m)
+    bad_area, oh_frac, bed_area = overhang_stats(m, pf.overhang_deg)
     if thickness is None:
         # 非水密（壳汤/破面）时体素分析无意义，自动跳过
         thickness = bool(wt["watertight"])
     if thickness:
-        wall = wall_thickness(m)
-        sup = _support_split(m)
+        wall = wall_thickness(m, min_wall=pf.min_wall_mm)
+        sup = _support_split(m, pf.overhang_deg)
+        islands = island_stats(m, pf)
     else:
         wall = {"verdict": "skipped", "reason": "非水密，体素壁厚无意义（先修复）"}
         sup = None
+        islands = {"bodies": None, "islands": None, "tiny_islands": None,
+                   "verdict": "skipped（体素分析跳过，随壁厚）"}
     # 风险评分用"真悬空"占比（有支撑检查时）——桥接/贴材料不需支撑，不该扣分
     eff_frac = sup["open_frac"] if sup and "open_frac" in sup else oh_frac
     grade, score = risk_grade(wt["watertight"], eff_frac,
-                              wt["nonmanifold_edges"], wt["degenerate_faces"], wall)
+                              wt["nonmanifold_edges"], wt["degenerate_faces"], wall,
+                              tiny_islands=int(islands.get("tiny_islands") or 0))
     overhang = {
-        "threshold_deg": 45,
+        "threshold_deg": pf.overhang_deg,
         "bad_area_mm2": round(bad_area, 1),
         "bad_frac": round(oh_frac, 4),
         "bed_contact_mm2": round(bed_area, 1),
@@ -273,6 +376,7 @@ def analyze_mesh(m: trimesh.Trimesh, thickness: bool | None = None) -> dict:
             "watertight": wt,
             "overhang": overhang,
             "wall_thickness": wall,
+            "islands": islands,
         },
         "risk": {"grade": grade, "score": score},
     }
@@ -345,7 +449,8 @@ def repair_voxel(m: trimesh.Trimesh, pitch: float | None = None):
     return r, pitch
 
 
-def wall_thickness(m: trimesh.Trimesh, pitch: float | None = None) -> dict:
+def wall_thickness(m: trimesh.Trimesh, pitch: float | None = None,
+                   min_wall: float | None = None) -> dict:
     """最小壁厚估计：体素 EDT -> 中轴点（距离局部极大）-> T = 2D − pitch。
     注意：trimesh 体素索引为 round 量化，表面各外扩约半个体素，薄特征厚度被
     高估约 1 个 pitch，故用 −p 补偿（T 偏保守/低估）。判定：
@@ -353,6 +458,7 @@ def wall_thickness(m: trimesh.Trimesh, pitch: float | None = None) -> dict:
     pitch 上限 0.2：更粗时亚 0.8mm 薄壁会量化漏检。"""
     from scipy import ndimage
     ext = float(max(m.extents))
+    mw = float(min_wall or MIN_WALL)
     if pitch is None:
         pitch = max(0.12, min(0.2, ext / 400.0))
     while (ext / pitch) ** 3 > 1.5e8 and pitch < 0.6:  # 内存护栏
@@ -361,6 +467,10 @@ def wall_thickness(m: trimesh.Trimesh, pitch: float | None = None) -> dict:
     if not g.any():
         return {"verdict": "skipped", "reason": "体素化后为空", "pitch_mm": round(pitch, 2)}
     gp = np.pad(g, 2)
+    origin = np.asarray(m.bounds[0], float)      # 栅格→物理：origin + (gp_idx - 2 + 0.5) * pitch
+
+    def to_phys(coords_gp):
+        return origin + (np.asarray(coords_gp, float) - 2 + 0.5) * pitch
     d = ndimage.distance_transform_edt(gp, sampling=pitch)
     d = d.astype(np.float32)[2:-2, 2:-2, 2:-2]
     maxf = ndimage.maximum_filter(d, size=3, mode="constant")
@@ -370,17 +480,82 @@ def wall_thickness(m: trimesh.Trimesh, pitch: float | None = None) -> dict:
                 "pitch_mm": round(pitch, 2)}
     vals = d[medial]
     t_min = float(2 * float(vals.min()) - pitch)
-    thin = medial & (d <= vals.min() + 1e-5)
-    spots = (np.argwhere(thin)[:3] * pitch).round(1).tolist()
-    verdict = ("fail" if t_min <= MIN_WALL - pitch
-               else "warn" if t_min < MIN_WALL + 2 * pitch else "pass")
+    # 薄弱区聚合：warn+fail 带的中轴体素按连通域归组（报告 top5，诊断图编号对应）
+    t_all = 2 * d - pitch
+    thin_band = medial & (t_all < mw + 2 * pitch)
+    regions, region_coords = [], []
+    if thin_band.any():
+        labels, n_reg = ndimage.label(thin_band)
+        sizes = np.bincount(labels.ravel())
+        sizes[0] = 0
+        for rid in np.argsort(sizes)[::-1][:5]:
+            if sizes[rid] == 0:
+                break
+            coords = np.argwhere(labels == rid)
+            t_reg = 2 * d[coords[:, 0], coords[:, 1], coords[:, 2]] - pitch
+            region_coords.append(coords)
+            regions.append({"id": len(regions) + 1, "voxels": int(sizes[rid]),
+                            "t_min_mm": round(float(t_reg.min()), 2),
+                            "center_mm": to_phys(coords.mean(axis=0) + 2).round(1).tolist(),
+                            "bbox_mm": [to_phys(coords.min(axis=0) + 2).round(1).tolist(),
+                                        to_phys(coords.max(axis=0) + 2).round(1).tolist()]})
+    # 薄弱区精测：EDT 是 pitch 量化值（±pitch 误差）。对每个薄弱区采样中轴体素，
+    # 沿「指向最近背景体素」的方向双向射线打到原始三角面，T = 去程 + 回程命中距离——
+    # 不重体素化、不重网格化，直接从真实几何测出精确壁厚。
+    if regions:
+        try:
+            _, inds = ndimage.distance_transform_edt(gp, sampling=pitch, return_indices=True)
+            eps = min(0.02, pitch * 0.25)   # 命中点距原点小于此=原点贴在三角面上（退化）
+            for rg, coords in zip(regions, region_coords):
+                step = max(1, len(coords) // 40)
+                sel = coords[::step][:40]
+                # 只采样深部体素（离表面 ≥2 体素）：表面壳/出血体素的射线测量是噪声
+                if len(sel):
+                    dsel = d[sel[:, 0], sel[:, 1], sel[:, 2]]   # d 已是未 pad 空间，与 coords 一致
+                    sel = sel[dsel >= 2 * pitch]
+                if not len(sel):
+                    continue    # 区域整体过薄（<2 体素）→ 量化值已足够，跳过精测
+                sel_gp = sel + 2                          # 未 pad 索引 → gp 索引
+                centers = to_phys(sel_gp)
+                targets = to_phys(inds[:, sel_gp[:, 0], sel_gp[:, 1], sel_gp[:, 2]].T)
+                dirs = targets - centers
+                norm = np.linalg.norm(dirs, axis=1, keepdims=True)
+                ok = norm[:, 0] > 1e-9
+                dirs = dirs[ok] / norm[ok]
+                origins = centers[ok] + dirs * (pitch * 0.5)  # 略离开体素中心避免自交
+                ts = []
+                for o, dvec in zip(origins, dirs):
+                    l1, _, _ = m.ray.intersects_location([o], [dvec])
+                    l2, _, _ = m.ray.intersects_location([o], [-dvec])
+                    # 先剔除退化命中（原点恰在三角面上时 d≈0 的自交假象），再取最近
+                    def nearest(hits):
+                        if not len(hits):
+                            return 0.0
+                        dd = np.linalg.norm(np.atleast_2d(hits) - o, axis=1)
+                        valid = dd[dd > eps]
+                        return float(valid.min()) if len(valid) else 0.0
+                    d1, d2 = nearest(l1), nearest(l2)
+                    if d1 > 0 and d2 > 0:
+                        ts.append(d1 + d2)              # 原点在壁内：两面前后距离相加
+                    elif d1 > 0:
+                        ts.append(d1)                   # 原点贴面：单侧穿越即壁厚
+                    elif d2 > 0:
+                        ts.append(d2)
+                ts = [t for t in ts if t > 1e-3]
+                if ts:
+                    rg["t_precise_mm"] = round(float(np.median(ts)), 2)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+    verdict = ("fail" if t_min <= mw - pitch
+               else "warn" if t_min < mw + 2 * pitch else "pass")
     return {
         "verdict": verdict,
         "min_wall_mm": round(t_min, 2),
-        "threshold_mm": MIN_WALL,
+        "threshold_mm": mw,
         "pitch_mm": round(pitch, 2),
-        "thin_spots_mm": spots,
-        "method": "voxel EDT medial, T=2D-p（round 量化补偿，量化 ±2*pitch）",
+        "thin_regions": regions,
+        "method": "voxel EDT medial, T=2D-p（量化）；薄弱区附射线精测 t_precise_mm（三角面级）",
     }
 
 
@@ -395,7 +570,8 @@ def _manhattan_ball(n: int) -> np.ndarray | None:
     return dist <= n
 
 
-def repair_thicken(m: trimesh.Trimesh, max_grow: int = 4, iters: int = 3):
+def repair_thicken(m: trimesh.Trimesh, max_grow: int = 4, iters: int = 3,
+                   min_wall: float | None = None):
     """壁厚修复 v2（体素域闭环收敛，尽力而为）：探测 fail 带中轴 -> 膨胀回贴 -> 再探测，
     最多 iters 轮；目标 T ≥ 0.8 + 2*pitch（安全裕量，补偿 marching-cubes 往返量化
     ——v1 一次性开环膨胀在细 pitch 下会残留 fail 边缘特征，复检仍 fail，实测教训）。
@@ -417,7 +593,8 @@ def repair_thicken(m: trimesh.Trimesh, max_grow: int = 4, iters: int = 3):
         maxf = ndimage.maximum_filter(d, size=3, mode="constant")
         t = 2 * d - pitch
         medial = (d >= maxf - 1e-5) & (d >= pitch - 1e-5) & gp
-        fail = medial & (t <= MIN_WALL - pitch)
+        mw = float(min_wall or MIN_WALL)
+        fail = medial & (t <= mw - pitch)
         return gp, d, t, medial, fail
 
     gp, d, t, medial, fail = probe(g)
@@ -495,6 +672,10 @@ def repair(m: trimesh.Trimesh, do_orient: bool = True, pitch: float | None = Non
     """检测+修复。height_mm 给定时，摆向后把最大边重缩放到该值
     （尺寸契约锁定在交付姿态——摆向会改变轴对齐包围盒）。"""
     steps = []
+    pf = load_profile(None)
+    m, clean_step = repair_island_clean(m, pf)
+    if clean_step:
+        steps.append(clean_step)
     before = analyze_mesh(m)
     wt = before["checks"]["watertight"]
     if (not wt["watertight"]) or wt["nonmanifold_edges"] > 0:
@@ -562,10 +743,14 @@ def render_diagnostic_sheet(m: trimesh.Trimesh, report: dict, steps, out_png: st
     ax.set_box_aspect((1, 1, 1)); ax.view_init(elev=22, azim=-55); ax.set_axis_off()
     checks = report.get("checks") or {}
     wall = checks.get("wall_thickness") or {}
-    spots = wall.get("thin_spots_mm") or []
-    if spots and wall.get("verdict") in ("fail", "warn"):
-        sp = np.asarray(spots, float)
-        ax.scatter(sp[:, 0], sp[:, 1], sp[:, 2], c="red", s=70, marker="D", depthshade=False)
+    regions = wall.get("thin_regions") or []
+    if regions and wall.get("verdict") in ("fail", "warn"):
+        for rg in regions:
+            ctr = rg.get("center_mm") or [0, 0, 0]
+            ax.scatter([ctr[0]], [ctr[1]], [ctr[2]], c="red", s=90,
+                       marker="o", depthshade=False)
+            ax.text(ctr[0], ctr[1], ctr[2], str(rg.get("id", "?")), color="white",
+                    fontsize=9, ha="center", va="center", depthshade=False)
 
     wt = checks.get("watertight") or {}
     oh = checks.get("overhang") or {}
@@ -577,16 +762,16 @@ def render_diagnostic_sheet(m: trimesh.Trimesh, report: dict, steps, out_png: st
         "",
         f"水密性: {'通过' if wt.get('watertight') else '未通过'}",
         f"   边界边 {wt.get('boundary_edges', '-')} / 非流形边 {wt.get('nonmanifold_edges', '-')}",
-        f"悬垂(>45°): {oh.get('bad_frac', 0) * 100:.1f}%",
+        f"悬垂(>{oh.get('threshold_deg', 45)}°): {oh.get('bad_frac', 0) * 100:.1f}%",
         f"   真悬空(需支撑): {oh.get('open_frac', 0) * 100:.1f}%",
         f"   桥接/贴材料(≤10mm): {oh.get('bridged_frac', 0) * 100:.1f}%",
         f"   问题面积 {oh.get('bad_area_mm2', '-')} mm²",
-        f"最小壁厚(>=0.8mm): {wall.get('min_wall_mm', '-')} mm [{wall.get('verdict', '-')}]",
+        f"最小壁厚(≥{wall.get('threshold_mm', 0.8)}mm): {wall.get('min_wall_mm', '-')} mm [{wall.get('verdict', '-')}]",
         "",
         "修复步骤:",
     ]
     lines += [f"  {i + 1}. {s}" for i, s in enumerate(steps or [])]
-    lines += ["", "灰=正常  蓝=贴床  红=悬垂  ◆=最薄壁"]
+    lines += ["", "灰=正常  蓝=贴床  红=悬垂  红圈=薄弱区(编号同报告)"]
     ax2 = fig.add_subplot(1, 2, 2)
     ax2.set_axis_off()
     ax2.text(0.02, 1.0, "\n".join(lines), va="top", fontsize=11)

@@ -575,8 +575,12 @@ def printguard_check_job(job_id: str):
 
 
 @mcp.tool()
-def printguard_analyze_printability(file_or_url: str, height_mm: float):
-    """秒级检测 mesh 可打印性（同步返回）：水密性、悬垂(>45°)、最小壁厚(>=0.8mm)、风险评分 S-D。
+def printguard_analyze_printability(file_or_url: str, height_mm: float,
+                                    printer: str = "generic-0.4"):
+    """秒级检测 mesh 可打印性（同步返回）：水密性、悬垂(阈值随打印机)、最小壁厚、风险评分 S-D。
+
+    Args:
+        printer: 打印机 profile：generic-0.4（默认）/ mini-0.2，或自定义 JSON 文件路径。
 
     Args:
         file_or_url: mesh 文件（公网部署传公网 URL；本地可用本机路径）
@@ -584,7 +588,7 @@ def printguard_analyze_printability(file_or_url: str, height_mm: float):
     """
     src = _fetch_file(file_or_url, JOB_DIR / "_tmp")
     m = pg.load_mesh(str(src), height_mm)
-    rep = pg.analyze_mesh(m)
+    rep = pg.analyze_mesh(m, profile=pg.load_profile(printer))
     rep["file"] = file_or_url
     return json.dumps(rep, ensure_ascii=False)
 
