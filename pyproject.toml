@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PrintGuard_Aholo"
+version = "0.1.4"
+description = "PrintGuard_Aholo —— FDM 打印件的生成→可制造性校核→修复→交付（Lux3D + 几何工具链），MCP Server 形态"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "requests>=2.25",
+    # 代码使用 mcp v1 的 FastMCP API；mcp 2.x 已改名为 MCPServer（不兼容）
+    "mcp>=1,<2",
+    # 几何内核（检测/修复是产品核心能力，默认安装）
+    "numpy>=1.24",
+    "trimesh>=4.0",
+    "scipy>=1.10",
+    # trimesh.voxel.ops.matrix_to_marching_cubes 需要 skimage.measure
+    "scikit-image>=0.20",
+    # 射线相交（孔检测/壁厚精测）需要 rtree 空间索引
+    "rtree>=1.0",
+    # 3MF 导出（交付默认格式）需要 lxml
+    "lxml>=5.0",
+]
+
+[project.optional-dependencies]
+# 本地文件上传（官方 Asset SDK，内置分块上传）；输入均为公网 URL 时不需要
+upload = ["manycore-aholo-sdk-asset"]
+
+[project.scripts]
+printguard-aholo = "printguard_aholo.server:main"
+printguard = "printguard_aholo.cli:main"
+printguard-geometry = "printguard_aholo.cli:main"
+
+[tool.setuptools]
+packages = ["printguard_aholo"]
