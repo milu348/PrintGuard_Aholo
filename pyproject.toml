@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "printguard-aholo"
+version = "0.1.0"
+description = "PrintGuard_Aholo —— FDM 打印件的生成→可制造性校核→修复→交付（Lux3D + 几何工具链），MCP Server 形态"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "PrintGuard_Aholo contributors" }]
+keywords = ["mcp", "3d-printing", "fdm", "mesh-repair", "lux3d", "model-context-protocol"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Manufacturing",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "requests>=2.25",
+    # 代码使用 mcp v1 的 FastMCP API；mcp 2.x 已改名为 MCPServer（不兼容）
+    "mcp>=1,<2",
+    # 几何内核（检测/修复是产品核心能力，默认安装）
+    "numpy>=1.24",
+    "trimesh>=4.0",
+    "scipy>=1.10",
+    # trimesh.voxel.ops.matrix_to_marching_cubes 需要 skimage.measure
+    "scikit-image>=0.20",
+    # 射线相交（孔检测/壁厚精测）需要 rtree 空间索引
+    "rtree>=1.0",
+    # 3MF 导出（交付默认格式）需要 lxml
+    "lxml>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/milu348/PrintGuard_Aholo"
+Repository = "https://github.com/milu348/PrintGuard_Aholo"
+Issues = "https://github.com/milu348/PrintGuard_Aholo/issues"
+
+# Asset 上传链（ensure_url/rehost/upload_file）随图片生成能力一起移除，
+# 因此不再有 optional dependencies。
+
+[project.scripts]
+printguard-aholo = "printguard_aholo.server:main"
+printguard = "printguard_aholo.cli:main"
+
+[tool.setuptools]
+# 子包（core/lux3d/pipeline/service）与独立演示层包 modelscope_agent 必须
+# 显式纳入，否则 Docker 的 `pip install .` 构建出的 wheel 会缺模块
+# （v0.1.4 只装了顶层包，static/index.html 也因此进不了镜像——
+# 根路由一直在走 JSON 兜底）。
+packages = [
+    "printguard_aholo",
+    "printguard_aholo.core",
+    "printguard_aholo.lux3d",
+    "printguard_aholo.pipeline",
+    "printguard_aholo.service",
+    "modelscope_agent",
+]
+
+[tool.setuptools.package-data]
+modelscope_agent = ["static/*.html"]

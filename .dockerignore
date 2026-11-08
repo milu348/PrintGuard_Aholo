@@ -1,0 +1,27 @@
+# ---- 密钥与本地敏感（绝不入库 / 绝不进镜像）----
+AholoAPI.json
+ModelScopeAPI.json
+secrets.local.json
+.env
+.env.*
+*.token
+*token*.json
+!package*.json
+
+# Docker 构建上下文瘦身（空间构建 = 本仓库，服务镜像只需运行所需）
+.git
+.venv
+output
+dist
+docs
+tests
+.github
+.vscode
+.idea
+*.log
+*.pyc
+__pycache__
+.mplcache
+*.egg-info
+Dockerfile
+.dockerignore
