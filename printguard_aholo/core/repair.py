@@ -23,36 +23,62 @@ THICKEN_FAIL_VOL_RATIO = 0.005
 
 def repair_island_clean(m: trimesh.Trimesh, profile: PrinterProfile):
     """修复步骤：删除体积 < island_min 的碎片孤岛（体积未知者保守保留）。
-    返回 (mesh, 描述|None)。"""
+    返回 (mesh, 描述|None)。
+
+    v0.1.1 内存安全重写：不再 m.split() 物化所有连通体——G1 带纹理输出
+    常见数千个碎壳（发丝/细部独立壳），split 会把每个碎壳物化成完整
+    Trimesh 对象（含材质引用），实测 5096 连通体直接 OOM（奶龙/阿狸案例）。
+    改为：连通体标记（face_adjacency，便宜）→ 逐块凸包体积判定 →
+    update_faces 删除，内存 O(面数)，判定口径与旧实现一致。"""
+    if len(m.faces) == 0:
+        return m, None
     try:
-        parts = m.split(only_watertight=False)
+        labels = trimesh.graph.connected_component_labels(
+            m.face_adjacency, node_count=len(m.faces))
     except Exception:
         return m, None
-    if len(parts) <= 1:
+    n_comp = int(labels.max()) + 1
+    if n_comp <= 1:
         return m, None
-    main = max(parts, key=lambda p: p.area)
-    keep, removed = [], []
-    for p in parts:
-        if p is main:
-            keep.append(p)
+
+    face_areas = np.asarray(m.area_faces, float)
+    areas = np.bincount(labels, weights=face_areas, minlength=n_comp)
+    main = int(areas.argmax())          # 最大面积的主连通体无条件保留
+    order = np.argsort(labels, kind="stable")
+    starts = np.searchsorted(labels[order], np.arange(n_comp), side="left")
+    ends = np.searchsorted(labels[order], np.arange(n_comp), side="right")
+
+    from scipy.spatial import ConvexHull
+    keep = np.zeros(len(m.faces), bool)
+    removed_vols = []
+    vertices = np.asarray(m.vertices, float)
+    faces = np.asarray(m.faces)
+    for cid in range(n_comp):
+        comp_faces = order[starts[cid]:ends[cid]]
+        if cid == main:
+            keep[comp_faces] = True
             continue
         try:
-            vol = float(max(p.convex_hull.volume, 0.0))
+            verts = np.unique(faces[comp_faces].ravel())
+            vol = float(ConvexHull(vertices[verts]).volume)
         except Exception:
-            vol = float("inf")
+            vol = float("inf")   # 凸包不可测（退化/共面碎壳）：保守保留
         if vol >= profile.island_min_mm3:
-            keep.append(p)
+            keep[comp_faces] = True
         else:
-            removed.append(vol)
-    if not removed:
+            removed_vols.append(min(vol, 1e9))
+
+    if not removed_vols:
         return m, None
-    # 描述只给数量与体积区间——逐个列体积会把手办级碎片列表（可上百项）
+    # 描述只给数量与体积区间——逐个列体积会把手办级碎片列表（可上千项）
     # 塞进报告与 Agent 上下文，纯噪声（v0.9.1 修）
-    vols = sorted(removed)
-    total = sum(vols)
-    desc = (f"island_clean(移除 {len(removed)} 个碎片孤岛，"
-            f"合计 {total:.1f}mm³，最大 {vols[-1]:.1f}mm³)")
-    return trimesh.util.concatenate(keep), desc
+    m2 = m.copy()
+    m2.update_faces(keep)
+    m2.remove_unreferenced_vertices()
+    vols = sorted(removed_vols)
+    desc = (f"island_clean(移除 {len(vols)} 个碎片孤岛，"
+            f"合计 {sum(vols):.1f}mm³，最大 {vols[-1]:.1f}mm³)")
+    return m2, desc
 
 
 def repair_voxel(m: trimesh.Trimesh, pitch: float | None = None):
