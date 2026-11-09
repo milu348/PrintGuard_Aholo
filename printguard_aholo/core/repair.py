@@ -15,6 +15,11 @@ from .inspect import (analyze_mesh, genuine_thin, overhang_stats,
 from .profiles import MIN_WALL, PrinterProfile, load_profile
 from .voxel import fit_pitch, solid_grid
 
+# 比例原则（v0.1.1）：fail 体积占模型体积比低于该值时跳过增厚——
+# 为千分之几的薄弱点重建整个表面（marching cubes + 降密）得不偿失，
+# 薄弱点仅报告不改形。0.5% ≈ 一个 50mm 玩偶上允许 ~17.5mm³ 的局部薄区。
+THICKEN_FAIL_VOL_RATIO = 0.005
+
 
 def repair_island_clean(m: trimesh.Trimesh, profile: PrinterProfile):
     """修复步骤：删除体积 < island_min 的碎片孤岛（体积未知者保守保留）。
@@ -154,6 +159,16 @@ def repair_thicken(m: trimesh.Trimesh, max_grow: int = 4, iters: int = 3,
     gp, d, fail = probe(g)
     if not fail.any():
         return None, None
+
+    # 比例原则：fail 体积占比过小时不值得全表面重建（v0.1.1 教训——
+    # 奶龙案例：0.001% 的薄弱点触发重建 + 降密，交付表面出现波纹劣化）
+    fail_vol = float(fail.sum()) * pitch**3
+    model_vol = abs(float(m.volume))
+    if model_vol > 0 and fail_vol < THICKEN_FAIL_VOL_RATIO * model_vol:
+        return None, (f"wall_thicken_skipped(比例原则: fail {fail_vol:.2f}mm³ 占"
+                      f"{fail_vol / model_vol * 100:.3f}% < "
+                      f"{THICKEN_FAIL_VOL_RATIO * 100:g}%，薄弱点仅报告不改形)")
+
     t0 = float(2 * float(d[fail].min()) - pitch)
     n_fail0 = int(fail.sum())
     total_r = 0

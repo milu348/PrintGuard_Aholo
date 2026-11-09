@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import trimesh
+
 from printguard_aholo.core.inspect import analyze_mesh, watertight_stats
 from printguard_aholo.core.meshio import load_mesh
 from printguard_aholo.core.profiles import PROFILE, PrinterProfile, load_profile
@@ -97,6 +99,21 @@ class RepairTests(unittest.TestCase):
         _, steps, _, after = repair(mesh, do_orient=False)
         self.assertTrue(any(s.startswith("wall_thicken") for s in steps))
         self.assertNotEqual(after["checks"]["wall_thickness"]["verdict"], "fail")
+
+    def test_proportionality_skips_tiny_thin_features(self):
+        """比例原则：健康实体上一根 0.5mm 细针（fail 占比 <0.5%）
+        只报告不改形——不为千分之几的薄弱点重建整个表面（奶龙教训）。"""
+        from printguard_aholo.core.selftest import _thin_spike
+
+        mesh = _thin_spike()
+        n_faces, n_verts = len(mesh.faces), len(mesh.vertices)
+        m2, steps, _, _ = repair(mesh, do_orient=False)
+        self.assertTrue(any(s.startswith("wall_thicken_skipped") for s in steps),
+                        f"应触发比例原则跳过，实际 steps={steps}")
+        self.assertFalse(any(s.startswith("wall_thicken(") for s in steps))
+        # 几何未被改动：面数/顶点数一致（没有体素重建，也没有增厚）
+        self.assertEqual(len(m2.faces), n_faces)
+        self.assertEqual(len(m2.vertices), n_verts)
 
     def test_island_clean_removes_small_fragment(self):
         mesh = _two_spheres()

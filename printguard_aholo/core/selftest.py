@@ -54,6 +54,17 @@ def _healthy_cube() -> trimesh.Trimesh:
     return c
 
 
+def _thin_spike() -> trimesh.Trimesh:
+    """健康实体 + 一根 0.5mm 细针（比例原则用例，单一融合体）：
+    fail 体积占比 ~0.01% < 0.5%，应跳过增厚、原样交付、仅报告薄弱点。"""
+    g = np.zeros((36, 36, 40), bool)
+    g[4:28, 4:28, 4:28] = True      # 12mm 立方（体素 pitch 0.5mm）
+    g[15:16, 15:16, 28:40] = True   # 0.5mm 细针立在顶面（单一融合体）
+    m = trimesh.voxel.ops.matrix_to_marching_cubes(g, pitch=0.5)
+    m.process(validate=True)
+    return m
+
+
 def _stacked_boxes() -> trimesh.Trimesh:
     """两层正方体上下叠放，中间 0.3mm 接触面（#4 间隙 fail 用例）"""
     base = trimesh.creation.box(extents=[20, 20, 5])
@@ -117,6 +128,7 @@ def run_selftest(outdir: str | Path | None = None) -> dict:
         "overhang_t": (_overhang_t(), False, (5300, 5900), None),
         "thin_plate": (_thin_plate(), False, (750, 1050), "warn"),
         "healthy_cube": (_healthy_cube(), False, (3040, 3710), "pass"),
+        "thin_spike": (_thin_spike(), False, (1400, 2000), None),
         "stacked_boxes": (_stacked_boxes(), False, (4950, 5350), "pass"),
     }
     summary = {}
@@ -139,9 +151,14 @@ def run_selftest(outdir: str | Path | None = None) -> dict:
         if name == "thin_plate":  # 额外验证：检测到 fail 且被增厚修复
             wall_ok = (wall_ok and wall_before == "fail"
                        and any(s.startswith("wall_thicken") for s in steps))
+        if name == "thin_spike":  # 比例原则：微小薄弱点只报告不改形
+            wall_ok = (wall_ok
+                       and any(s.startswith("wall_thicken_skipped") for s in steps)
+                       and not any(s.startswith("wall_thicken(") for s in steps))
         # 表面平整度回归：体素重构/增厚的产物必须已去阶梯
-        # （>30° 折角占比阈值 0.05——未平滑时体素阶梯普遍在 0.17~0.23）
-        voxel_touched = any(s.startswith("voxel_rebuild") or s.startswith("wall_thicken")
+        # （注意用 "wall_thicken(" 精确前缀——"wall_thicken_skipped" 是比例原则跳过，
+        #  恰恰说明没有体素流程，不应触发本断言）
+        voxel_touched = any(s.startswith("voxel_rebuild") or s.startswith("wall_thicken(")
                             for s in steps)
         # 体素阶梯去除回归：走过体素流程的产物，>30° 折角占比必须 < 0.05
         rough_after = _roughness(m) if voxel_touched else None
