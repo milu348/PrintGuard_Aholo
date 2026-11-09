@@ -45,6 +45,8 @@ def _build_run_parser(sub) -> None:
     run.add_argument("--no-orient", action="store_true", help="跳过自动摆向")
     run.add_argument("--no-smooth", action="store_true",
                      help="跳过去阶梯平滑（保留 45° 阶梯面）")
+    run.add_argument("--force-rebuild", action="store_true",
+                     help="越过重建保真度门槛强制体素重建（细节密集模型会损毁细节）")
     run.add_argument("--no-repair", action="store_true",
                      help="跳过整条修复链（默认必修复；仅用户明确不要修复时使用）")
     run.add_argument("--api-key", default=None,
@@ -81,6 +83,8 @@ def main(argv=None) -> int:
     a2.add_argument("--no-orient", action="store_true", help="跳过自动摆向")
     a2.add_argument("--no-smooth", action="store_true",
                     help="跳过去阶梯平滑（保留体素重构的原始 45° 阶梯面）")
+    a2.add_argument("--force-rebuild", action="store_true",
+                    help="越过重建保真度门槛强制体素重建")
     a2.add_argument("--json", default=None, help="报告写出到该文件")
 
     sub.add_parser("selftest", help="内置合成用例自测")
@@ -99,7 +103,7 @@ def main(argv=None) -> int:
                     args.source, args.height_mm, name=args.name,
                     out_dir=args.out_dir, fmt=args.fmt,
                     orient=not args.no_orient, smooth=not args.no_smooth,
-                    api_key=args.api_key)
+                    force_rebuild=args.force_rebuild, api_key=args.api_key)
             else:
                 summary = run_generate(
                     args.prompt, height_mm=args.height_mm,
@@ -108,7 +112,8 @@ def main(argv=None) -> int:
                     version=args.version, face_count=args.face_count,
                     name=args.name, out_dir=args.out_dir, fmt=args.fmt,
                     orient=not args.no_orient, smooth=not args.no_smooth,
-                    repair=not args.no_repair, api_key=args.api_key)
+                    repair=not args.no_repair, force_rebuild=args.force_rebuild,
+                    api_key=args.api_key)
         except (ValueError, PipelineError, Lux3DError) as exc:
             print(json.dumps({"ok": False, "error": str(exc)},
                              ensure_ascii=False, indent=1), file=sys.stderr)

@@ -20,16 +20,32 @@ from .voxel import fit_pitch, solid_grid
 # 薄弱点仅报告不改形。0.5% ≈ 一个 50mm 玩偶上允许 ~17.5mm³ 的局部薄区。
 THICKEN_FAIL_VOL_RATIO = 0.005
 
+# 重建保真度门槛（v0.1.1）：模型细节尺度（中位边长）< 3×可达重建 pitch 时
+# 跳过体素重建——九尾妖狐案例：中位边长 0.25mm ≈ 可达 pitch（0.15~0.23mm），
+# 重建后脸部/细腿/裙褶全部熔毁。此时诚实跳过重建、原样交付并报告风险，
+# 而不是输出毁容模型。
+REBUILD_DETAIL_RATIO = 3.0
+
+# 微小孤岛的「贴近主体」距离（顶点近似）：距大部件 ≤3mm 的微小壳是
+# 细节特征（毛发/装饰/浮丝），保留；远离主体的才是飞件风险，删除。
+# 九尾妖狐案例教训：按个体体积判据会把整个发型当碎片删掉（秃头渲染）。
+ISLAND_NEAR_GAP_MM = 3.0
+
 
 def repair_island_clean(m: trimesh.Trimesh, profile: PrinterProfile):
-    """修复步骤：删除体积 < island_min 的碎片孤岛（体积未知者保守保留）。
+    """修复步骤：删除「远离主体的」体积 < island_min 的碎片孤岛；
+    贴近大部件的微小壳是细节特征（毛发/装饰），保留。体积未知者保守保留。
     返回 (mesh, 描述|None)。
 
     v0.1.1 内存安全重写：不再 m.split() 物化所有连通体——G1 带纹理输出
     常见数千个碎壳（发丝/细部独立壳），split 会把每个碎壳物化成完整
-    Trimesh 对象（含材质引用），实测 5096 连通体直接 OOM（奶龙/阿狸案例）。
+    Trimesh 对象（含材质引用），实测 5096 连通体直接 OOM（阿狸案例）。
     改为：连通体标记（face_adjacency，便宜）→ 逐块凸包体积判定 →
-    update_faces 删除，内存 O(面数)，判定口径与旧实现一致。"""
+    贴近主体距离校验 → update_faces 删除，内存 O(面数)。
+
+    判据两问：① 它小吗（凸包 < island_min）？② 它远离主体吗（顶点距离
+    > ISLAND_NEAR_GAP_MM）？两者皆是才是飞件垃圾——贴近主体的微小壳
+    是设计细节（发型/装饰），删了就是「秃头渲染」事故。"""
     if len(m.faces) == 0:
         return m, None
     try:
@@ -48,8 +64,9 @@ def repair_island_clean(m: trimesh.Trimesh, profile: PrinterProfile):
     starts = np.searchsorted(labels[order], np.arange(n_comp), side="left")
     ends = np.searchsorted(labels[order], np.arange(n_comp), side="right")
 
-    from scipy.spatial import ConvexHull
+    from scipy.spatial import ConvexHull, cKDTree
     keep = np.zeros(len(m.faces), bool)
+    small_cids = []          # (cid, comp_faces, hull_vol) 微小孤岛候选
     removed_vols = []
     vertices = np.asarray(m.vertices, float)
     faces = np.asarray(m.faces)
@@ -66,7 +83,21 @@ def repair_island_clean(m: trimesh.Trimesh, profile: PrinterProfile):
         if vol >= profile.island_min_mm3:
             keep[comp_faces] = True
         else:
-            removed_vols.append(min(vol, 1e9))
+            small_cids.append((cid, comp_faces, min(vol, 1e9)))
+
+    # 第二遍（v0.1.1）：贴近大部件的微小孤岛是细节特征（毛发/装饰/浮丝），
+    # 保留；远离主体的才是飞件风险，删除。阿狸案例：按个体体积判据会把
+    # 整个发型当碎片删掉（秃头渲染）。
+    if small_cids:
+        large_verts = np.unique(faces[keep].ravel())
+        tree = cKDTree(vertices[large_verts])
+        for cid, comp_faces, vol in small_cids:
+            comp_verts = np.unique(faces[comp_faces].ravel())
+            dist, _ = tree.query(vertices[comp_verts], k=1)
+            if float(dist.min()) <= ISLAND_NEAR_GAP_MM:
+                keep[comp_faces] = True
+            else:
+                removed_vols.append(vol)
 
     if not removed_vols:
         return m, None
@@ -82,9 +113,13 @@ def repair_island_clean(m: trimesh.Trimesh, profile: PrinterProfile):
 
 
 def repair_voxel(m: trimesh.Trimesh, pitch: float | None = None):
-    """体素重构修复：输出恒为水密实体；有损（细节磨平到 pitch 量级）。"""
+    """体素重构修复：输出恒为水密实体；有损（细节磨平到 pitch 量级）。
+
+    pitch 下限 0.15mm（v0.1.1 前是 0.4——对 50mm 手办是 1/125 分辨率，
+    脸/手指/细腿全部熔毁，实测教训）。预算会自动放粗 pitch 控内存：
+    内存紧张的容器上宁可诚实报告「分辨率不足」，也不输出毁容模型。"""
     if pitch is None:
-        pitch = fit_pitch(float(m.extents.max()), lo=0.4, hi=2.0)
+        pitch = fit_pitch(float(m.extents.max()), lo=0.15, hi=2.0)
     g = solid_grid(m, pitch)
     r = trimesh.voxel.ops.matrix_to_marching_cubes(g, pitch=pitch)
     r.process(validate=True)
@@ -273,7 +308,8 @@ def orient(m: trimesh.Trimesh) -> trimesh.Trimesh:
 
 def repair(m: trimesh.Trimesh, do_orient: bool = True, pitch: float | None = None,
            fix_wall: bool = True, height_mm: float | None = None,
-           smooth: bool = True, analyze: bool = True):
+           smooth: bool = True, analyze: bool = True,
+           force_rebuild: bool = False):
     """检测+修复。height_mm 给定时，摆向后把最大边重缩放到该值
     （尺寸契约锁定在交付姿态——摆向会改变轴对齐包围盒）。
 
@@ -289,15 +325,32 @@ def repair(m: trimesh.Trimesh, do_orient: bool = True, pitch: float | None = Non
         steps.append(clean_step)
     # 是否重构只看水密性——不需要完整 analyze（那要建 1.25 亿体素的大网格）
     wt = watertight_stats(m)
-    if (not wt["watertight"]) or wt["nonmanifold_edges"] > 0:
-        m, p = repair_voxel(m, pitch)
+    needs_rebuild = (not wt["watertight"]) or wt["nonmanifold_edges"] > 0
+    rebuild_blocked = False
+    if needs_rebuild:
+        r_pitch = pitch if pitch is not None else fit_pitch(
+            float(m.extents.max()), lo=0.15, hi=2.0)
+        # 重建保真度门槛：模型细节尺度（中位边长）逼近可达重建分辨率时，
+        # 体素重构必然抹平细节——诚实跳过重建、原样交付并报告，而不是
+        # 输出毁容模型（九尾妖狐案例实测教训）。force_rebuild=True 可显式
+        # 越过门槛（调用方自担后果）。
+        detail = float(np.median(m.edges_unique_length))
+        if (not force_rebuild
+                and detail < REBUILD_DETAIL_RATIO * r_pitch):
+            steps.append(
+                f"rebuild_skipped(保真度门槛: 中位边长{detail:.2f}mm < "
+                f"{REBUILD_DETAIL_RATIO:g}×可达pitch{r_pitch:.2f}mm，"
+                "细节密集非水密模型原样交付)")
+            rebuild_blocked = True
+    if needs_rebuild and not rebuild_blocked:
+        m, p = repair_voxel(m, r_pitch)
         steps.append(f"voxel_rebuild(pitch={p:.2f}mm)")
         if smooth:
             m = smooth_taubin(m)
             steps.append("smooth_taubin(去阶梯)")
-    else:
+    elif not needs_rebuild:
         steps.append("watertight_ok(skip_rebuild)")
-    if fix_wall:
+    if fix_wall and not rebuild_blocked:
         m2, wall_step = repair_thicken(m)
         if wall_step:
             if m2 is not None:
@@ -306,6 +359,13 @@ def repair(m: trimesh.Trimesh, do_orient: bool = True, pitch: float | None = Non
                     m = smooth_taubin(m)
                     steps.append("smooth_taubin(去阶梯)")
             steps.append(wall_step)
+    # 二次清岛（v0.1.1）：体素重构/增厚的 marching cubes 会产生浮点噪声碎屑
+    # （2 面翻转小片等），它们让整体 is_watertight=False，违背「输出恒为水密
+    # 实体」的承诺。复用 island_clean（凸包体积口径）清掉，主实体不受影响。
+    if any(s.startswith(("voxel_rebuild", "wall_thicken(")) for s in steps):
+        m, clean2 = repair_island_clean(m, pf)
+        if clean2:
+            steps.append(clean2)
     if do_orient:
         m = orient(m)
         steps.append("orient(overhang_min)")

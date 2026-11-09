@@ -102,12 +102,16 @@ def register_tools(ctx: AppContext) -> dict[str, Callable[..., dict]]:
                           fmt: Literal["3mf", "stl"] = "3mf",
                           orient: bool = True, smooth: bool = True,
                           pitch: float | None = None,
+                          force_rebuild: bool = False,
                           api_key: str | None = None) -> dict:
         """修复已有模型：体检 → 修复 → 交付（异步，返回 job_id）。
 
         source：公网 URL（推荐，平台签名 URL 也可直接给）或服务端本地路径。
         height_mm：目标最大边（毫米，必填）。
         非水密/非流形时走体素重构（有损，细节磨平到 pitch），薄壁区域会闭环增厚。
+        保真度门槛：模型细节密度接近可达重建分辨率时自动跳过重建、原样交付
+        （warnings 会说明）；确要强制重建时传 force_rebuild=true（自担细节
+        损失风险）。
         """
         from ..pipeline.inputs import is_url, make_client
 
@@ -116,11 +120,13 @@ def register_tools(ctx: AppContext) -> dict[str, Callable[..., dict]]:
                       if is_url(source) else None)
             summary = run_repair(
                 source, height_mm, out_dir=str(settings.runs_dir), fmt=fmt,
-                orient=orient, smooth=smooth, pitch=pitch, client=client)
+                orient=orient, smooth=smooth, pitch=pitch,
+                force_rebuild=force_rebuild, client=client)
             return deliver(summary)
 
         return submit("printguard_repair", run,
-                      source=source, height_mm=height_mm, fmt=fmt)
+                      source=source, height_mm=height_mm, fmt=fmt,
+                      force_rebuild=force_rebuild)
 
     # ---------- 工具：生成层（异步） ----------
 

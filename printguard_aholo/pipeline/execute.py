@@ -107,7 +107,7 @@ def run_scope(name: str | None, *, prefix: str, out_dir: str | Path):
 def process_mesh(mesh, *, run_id: str, mode: str, out: Path, height_mm: float,
                  pitch: float | None, smooth: bool, orient: bool, remesh: bool,
                  fmt: str, started: float,
-                 do_repair: bool = True) -> dict:
+                 do_repair: bool = True, force_rebuild: bool = False) -> dict:
     """体检 → 修复 →（降密）→ 导出，返回最小交付结果。
 
     do_repair=False 时跳过整条修复链（含摆向/平滑/降密），仅做格式导出
@@ -120,14 +120,19 @@ def process_mesh(mesh, *, run_id: str, mode: str, out: Path, height_mm: float,
         try:
             fixed, steps, _before, _after = repair(
                 mesh, do_orient=orient, pitch=pitch, height_mm=height_mm,
-                smooth=smooth, analyze=False)
+                smooth=smooth, analyze=False, force_rebuild=force_rebuild)
         except MemoryError:
             # 托管容器内存吃紧：放粗 pitch 再试一次（精度换内存，别让任务直接失败）
             logger.warning("run %s 修复内存不足，放粗 pitch 重试", run_id)
             coarse = min(2.0, max(0.4, (pitch or 0.5) * 2.0))
             fixed, steps, _before, _after = repair(
                 mesh, do_orient=orient, pitch=coarse, height_mm=height_mm,
-                smooth=smooth, analyze=False)
+                smooth=smooth, analyze=False, force_rebuild=force_rebuild)
+        # 保真度门槛触发：把「原样交付」的原因放进 warnings，让调用方看得见
+        if any(s.startswith("rebuild_skipped") for s in steps):
+            warnings.append("模型非水密但细节密度高（细节尺度接近可达重建分辨率），"
+                            "体素重建会破坏细节——已按原样交付；建议使用支持重叠体积"
+                            "处理的现代切片软件打印，或先用网格修复工具处理")
 
         if remesh:
             fixed = remesh_if_needed(fixed, steps, smooth=smooth)

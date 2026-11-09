@@ -65,6 +65,18 @@ def _thin_spike() -> trimesh.Trimesh:
     return m
 
 
+def _dense_soup() -> trimesh.Trimesh:
+    """高细节密度非水密壳（重建保真度门槛用例）：
+    六次细分的球面挖洞——中位边长 ~0.19mm ≈ 可达重建 pitch（0.125mm），
+    体素重建必然毁细节，应触发保真度门槛原样交付。"""
+    rng = np.random.default_rng(3)
+    s = trimesh.creation.icosphere(subdivisions=6, radius=10.0)
+    keep = np.ones(len(s.faces), bool)
+    keep[rng.choice(len(s.faces), 3000, replace=False)] = False
+    return trimesh.Trimesh(vertices=s.vertices, faces=s.faces[keep],
+                           process=False)
+
+
 def _stacked_boxes() -> trimesh.Trimesh:
     """两层正方体上下叠放，中间 0.3mm 接触面（#4 间隙 fail 用例）"""
     base = trimesh.creation.box(extents=[20, 20, 5])
@@ -129,6 +141,7 @@ def run_selftest(outdir: str | Path | None = None) -> dict:
         "thin_plate": (_thin_plate(), False, (750, 1050), "warn"),
         "healthy_cube": (_healthy_cube(), False, (3040, 3710), "pass"),
         "thin_spike": (_thin_spike(), False, (1400, 2000), None),
+        "dense_soup": (_dense_soup(), False, (3600, 4400), None),
         "stacked_boxes": (_stacked_boxes(), False, (4950, 5350), "pass"),
     }
     summary = {}
@@ -138,7 +151,10 @@ def run_selftest(outdir: str | Path | None = None) -> dict:
         m, steps, before, after = repair(mesh, do_orient=True)
         m.export(str(out / f"{name}.stl"))
         rebuilt = any(s.startswith("voxel_rebuild") for s in steps)
-        vol_ok = vol_range[0] <= after["checks"]["watertight"]["volume_mm3"] <= vol_range[1]
+        # 非水密原样交付的用例（保真度门槛）：体积不可测，跳过体积断言
+        vol_after = after["checks"]["watertight"]["volume_mm3"]
+        vol_ok = True if vol_after is None else (
+            vol_range[0] <= vol_after <= vol_range[1])
         # 体素重构是有损的：只对走重构的用例校验外框尺寸（容忍 pitch 量级偏差）
         if rebuilt:
             ext_ok = np.allclose(sorted(float(x) for x in m.extents), ext_before,
@@ -163,9 +179,15 @@ def run_selftest(outdir: str | Path | None = None) -> dict:
         # 体素阶梯去除回归：走过体素流程的产物，>30° 折角占比必须 < 0.05
         rough_after = _roughness(m) if voxel_touched else None
         rough_ok = True if rough_after is None else rough_after < 0.05
-        case_ok = (after["checks"]["watertight"]["watertight"]
-                   and (rebuilt == rebuild_expected) and vol_ok and ext_ok
-                   and wall_ok and rough_ok)
+        if name == "dense_soup":  # 重建保真度门槛：高细节非水密壳原样交付
+            case_ok = (after["checks"]["watertight"]["watertight"] is False
+                       and any(s.startswith("rebuild_skipped") for s in steps)
+                       and not any(s.startswith("voxel_rebuild") for s in steps)
+                       and not any(s.startswith("wall_thicken(") for s in steps))
+        else:
+            case_ok = (after["checks"]["watertight"]["watertight"]
+                       and (rebuilt == rebuild_expected) and vol_ok and ext_ok
+                       and wall_ok and rough_ok)
         if name == "stacked_boxes":
             # 验证：堆叠贴合面不再被误判为悬垂
             gap = before["checks"]["overhang"]

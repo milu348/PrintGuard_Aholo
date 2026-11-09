@@ -41,7 +41,7 @@ def run_generate(prompt: str | None = None, *, height_mm,
                  name: str | None = None,
                  out_dir: str = DEFAULT_OUT_DIR,
                  fmt: str = "3mf", orient: bool = True, smooth: bool = True,
-                 repair: bool = True,
+                 repair: bool = True, force_rebuild: bool = False,
                  client=None, api_key: str | None = None,
                  verbose: bool = False) -> dict:
     """生成并交付：生成（三种模式）→ 下载 GLB → 体检 → 修复 → 3MF/STL。
@@ -109,4 +109,5 @@ def run_generate(prompt: str | None = None, *, height_mm,
                             height_mm=height, pitch=preset["pitch"],
                             smooth=smooth, orient=orient,
                             remesh=preset["remesh"], fmt=fmt,
-                            do_repair=repair, started=started)
+                            do_repair=repair, force_rebuild=force_rebuild,
+                            started=started)

@@ -115,13 +115,49 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(len(m2.faces), n_faces)
         self.assertEqual(len(m2.vertices), n_verts)
 
+    def test_fidelity_gate_skips_dense_soup_rebuild(self):
+        """重建保真度门槛：细节尺度 ≈ 可达 pitch 的非水密模型，
+        原样交付而不是毁容式重建（九尾妖狐教训）。"""
+        from printguard_aholo.core.selftest import _dense_soup
+
+        mesh = _dense_soup()
+        n_faces = len(mesh.faces)
+        m2, steps, _, _ = repair(mesh, do_orient=False)
+        self.assertTrue(any(s.startswith("rebuild_skipped") for s in steps),
+                        f"应触发保真度门槛，实际 steps={steps}")
+        self.assertFalse(any(s.startswith("voxel_rebuild") for s in steps))
+        self.assertFalse(any(s.startswith("wall_thicken(") for s in steps))
+        # 原样交付：几何未被改动
+        self.assertEqual(len(m2.faces), n_faces)
+
+    def test_force_rebuild_overrides_fidelity_gate(self):
+        """force_rebuild=True 显式越过保真度门槛（调用方自担后果）。"""
+        from printguard_aholo.core.selftest import _dense_soup
+
+        mesh = _dense_soup()
+        m2, steps, _, _ = repair(mesh, do_orient=False, force_rebuild=True)
+        self.assertTrue(any(s.startswith("voxel_rebuild") for s in steps))
+
     def test_island_clean_removes_small_fragment(self):
-        mesh = _two_spheres()
-        strict = PrinterProfile(island_min_mm3=1e9)  # 除主域外全部视为碎片
-        cleaned, step = repair_island_clean(mesh, strict)
+        """远离主体的微小孤岛（hull < island_min 且距离 > 3mm）= 飞件风险，删除。"""
+        main = trimesh.creation.icosphere(subdivisions=3, radius=10.0)
+        debris = trimesh.creation.icosphere(subdivisions=2, radius=1.5)
+        debris.apply_translation([30, 0, 0])   # 表面间隙 ~18.5mm，远离主体
+        mesh = trimesh.util.concatenate([main, debris])
+        cleaned, step = repair_island_clean(mesh, load_profile())
         self.assertIsNotNone(step)
         self.assertIn("island_clean", step)
         self.assertEqual(len(cleaned.split(only_watertight=False)), 1)
+
+    def test_island_clean_keeps_nearby_micro_feature(self):
+        """贴近主体的微小孤岛 = 细节特征（毛发/装饰），保留（阿狸秃头教训）。"""
+        main = trimesh.creation.icosphere(subdivisions=3, radius=10.0)
+        tuft = trimesh.creation.icosphere(subdivisions=2, radius=1.5)
+        tuft.apply_translation([11, 0, 0])     # 与主体表面相接（间隙 ~0）
+        mesh = trimesh.util.concatenate([main, tuft])
+        cleaned, step = repair_island_clean(mesh, load_profile())
+        self.assertIsNone(step)                 # 贴近 → 不删
+        self.assertEqual(len(cleaned.faces), len(mesh.faces))
 
     def test_island_clean_keeps_healthy_mesh(self):
         mesh = _healthy_cube()

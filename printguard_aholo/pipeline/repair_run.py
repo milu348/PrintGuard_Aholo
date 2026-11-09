@@ -20,7 +20,7 @@ def run_repair(source: str, height_mm, *, name: str | None = None,
                orient: bool = True, smooth: bool = True,
                pitch: float | None = None,
                client=None, api_key: str | None = None,
-               verbose: bool = False) -> dict:
+               verbose: bool = False, force_rebuild: bool = False) -> dict:
     """修复已有网格：本地路径或公网 URL → 检测 → 修复 → 交付。"""
     started = time.time()
     height = validate_height(height_mm)
@@ -34,4 +34,4 @@ def run_repair(source: str, height_mm, *, name: str | None = None,
         return process_mesh(mesh, run_id=run_id, mode="repair", out=out,
                             height_mm=height, pitch=pitch, smooth=smooth,
                             orient=orient, remesh=True, fmt=fmt,
-                            started=started)
+                            force_rebuild=force_rebuild, started=started)
